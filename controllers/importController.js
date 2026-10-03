@@ -19,6 +19,17 @@ exports.importCsv = async (req, res) => {
 
     const content = fs.readFileSync(req.file.path, "utf-8");
     
+    // Sync newly uploaded CSV file to data/appointments.csv
+    try {
+      const dataDir = path.resolve(__dirname, "../data");
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(dataDir, "appointments.csv"), content, "utf-8");
+    } catch (e) {
+      // Ignored
+    }
+
     // Clean up temp file
     try {
       fs.unlinkSync(req.file.path);
