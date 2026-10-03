@@ -1,0 +1,25 @@
+# Node dependencies
+node_modules/
+
+# Python cache & build
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Playwright Browser Profile
+weave-profile/
+
+# Logs & temp CSV runs
+logs/*.log
+data/temp_run_*.csv
+
+# Environment variables
+.env
+.env.local
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
