@@ -43,13 +43,14 @@ class BrowserManager:
     def _ensure_chromium_installed(self):
         try:
             logger.info("Ensuring Playwright Chromium browser binary is installed...")
-            subprocess.run(
+            res = subprocess.run(
                 [sys.executable, "-m", "playwright", "install", "chromium"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
                 check=False,
-                timeout=60,
+                timeout=300,
             )
+            logger.info(f"Playwright chromium install finished with code {res.returncode}")
         except Exception as e:
             logger.warning(f"Auto-install Chromium attempt failed: {e}")
 
@@ -91,15 +92,28 @@ class BrowserManager:
                 )
             except Exception as e2:
                 logger.warning(f"Persistent context fallback failed: {e2}. Launching clean browser instance...")
-                browser = self.playwright.chromium.launch(
-                    headless=self.headless,
-                    slow_mo=self.slow_mo,
-                    args=chromium_args,
-                )
-                self.context = browser.new_context(
-                    viewport={"width": 1440, "height": 900},
-                    user_agent=user_agent_str,
-                )
+                try:
+                    browser = self.playwright.chromium.launch(
+                        headless=self.headless,
+                        slow_mo=self.slow_mo,
+                        args=chromium_args,
+                    )
+                    self.context = browser.new_context(
+                        viewport={"width": 1440, "height": 900},
+                        user_agent=user_agent_str,
+                    )
+                except Exception as e3:
+                    logger.error(f"Clean browser launch failed: {e3}. Retrying Chromium install...")
+                    self._ensure_chromium_installed()
+                    browser = self.playwright.chromium.launch(
+                        headless=self.headless,
+                        slow_mo=self.slow_mo,
+                        args=chromium_args,
+                    )
+                    self.context = browser.new_context(
+                        viewport={"width": 1440, "height": 900},
+                        user_agent=user_agent_str,
+                    )
 
         self.context.set_default_timeout(self.default_timeout)
 
