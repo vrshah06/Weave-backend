@@ -71,8 +71,9 @@ class AutomationWorker {
     const modeFlag = isSendMode ? "--send" : "--dry-run";
     const args = ["main.py", modeFlag, "--file", csvPath];
 
+    const pythonCmd = process.env.PYTHON_PATH || (process.platform === "win32" ? "python" : "python3");
     try {
-      this.activeProcess = spawn("python", args, {
+      this.activeProcess = spawn(pythonCmd, args, {
         cwd: rootDir,
         env: { ...process.env, PYTHONUNBUFFERED: "1" }
       });
