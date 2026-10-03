@@ -1,3 +1,6 @@
+import sys
+import logging
+import subprocess
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -9,6 +12,8 @@ from playwright.sync_api import (
 )
 
 from config import PROFILE_DIR, HEADLESS, SLOW_MO, DEFAULT_TIMEOUT
+
+logger = logging.getLogger("weave_automation")
 
 
 class BrowserManager:
@@ -35,6 +40,19 @@ class BrowserManager:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
 
+    def _ensure_chromium_installed(self):
+        try:
+            logger.info("Ensuring Playwright Chromium browser binary is installed...")
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=60,
+            )
+        except Exception as e:
+            logger.warning(f"Auto-install Chromium attempt failed: {e}")
+
     def start(self) -> Tuple[BrowserContext, Page]:
         self.profile_dir.mkdir(parents=True, exist_ok=True)
 
@@ -47,13 +65,33 @@ class BrowserManager:
             "--disable-gpu",
         ]
 
-        self.context = self.playwright.chromium.launch_persistent_context(
-            user_data_dir=str(self.profile_dir),
-            headless=self.headless,
-            slow_mo=self.slow_mo,
-            viewport={"width": 1440, "height": 900},
-            args=chromium_args,
-        )
+        try:
+            self.context = self.playwright.chromium.launch_persistent_context(
+                user_data_dir=str(self.profile_dir),
+                headless=self.headless,
+                slow_mo=self.slow_mo,
+                viewport={"width": 1440, "height": 900},
+                args=chromium_args,
+            )
+        except Exception as exc:
+            logger.warning(f"launch_persistent_context failed: {exc}. Attempting Chromium install and launch fallback...")
+            self._ensure_chromium_installed()
+            try:
+                self.context = self.playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(self.profile_dir),
+                    headless=self.headless,
+                    slow_mo=self.slow_mo,
+                    viewport={"width": 1440, "height": 900},
+                    args=chromium_args,
+                )
+            except Exception as e2:
+                logger.warning(f"Persistent context fallback failed: {e2}. Launching clean browser instance...")
+                browser = self.playwright.chromium.launch(
+                    headless=self.headless,
+                    slow_mo=self.slow_mo,
+                    args=chromium_args,
+                )
+                self.context = browser.new_context(viewport={"width": 1440, "height": 900})
 
         self.context.set_default_timeout(self.default_timeout)
 
