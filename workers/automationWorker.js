@@ -101,7 +101,7 @@ class AutomationWorker {
     });
 
     processRef.stderr.on("data", (chunk) => {
-      this._handleChunk(chunk.toString(), workspaceId, runId, items);
+      this._handleChunk(chunk.toString(), workspaceId, runId, items, true);
     });
 
     processRef.on("close", async (code) => {
@@ -200,7 +200,7 @@ class AutomationWorker {
     return true;
   }
 
-  _handleChunk(text, workspaceId, runId, items) {
+  _handleChunk(text, workspaceId, runId, items, isStderr = false) {
     const lines = text.split("\n");
     for (const line of lines) {
       const trimmed = line.trim();
@@ -213,6 +213,14 @@ class AutomationWorker {
         } catch (e) {
           // Fallback log
         }
+      } else if (isStderr || trimmed.includes("Error:") || trimmed.includes("Exception:") || trimmed.startsWith("Traceback")) {
+        console.error(`[Worker Error] ${trimmed}`);
+        automationState.addLog({
+          patient: "System Error",
+          action: "Automation Output",
+          status: "failed",
+          message: trimmed.substring(0, 250)
+        });
       }
     }
   }
