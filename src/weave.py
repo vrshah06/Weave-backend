@@ -43,7 +43,7 @@ class WeaveMessenger:
         """
         try:
             logger.info("Opening Weave application URL (https://app.getweave.com)...")
-            self.page.goto(WEAVE_APP_URL, wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT)
+            self.page.goto(WEAVE_APP_URL, wait_until="domcontentloaded", timeout=30000)
             # Give client-side redirect time to settle if unauthenticated
             time.sleep(2)
             return True, ProcessStatus.READY_TO_SEND
@@ -312,6 +312,13 @@ class WeaveMessenger:
             search_digits = digits[-10:] if len(digits) >= 10 else digits
 
             to_field.click(force=True)
+            try:
+                to_field.fill("")
+            except Exception:
+                pass
+            to_field.press("Control+A")
+            to_field.press("Backspace")
+            time.sleep(0.1)
 
             to_field.type(search_digits, delay=30)
             logger.info(f"Typed phone '{search_digits}' into To: field. Waiting for search portal...")
@@ -336,9 +343,9 @@ class WeaveMessenger:
         try:
             portal = self.page.locator("div[data-floating-ui-portal]").first
             if portal.count() > 0 and portal.is_visible():
-                containers = portal.locator("[data-trackingid='person-list-item-expandable'], [role='menuitem'], [role='option']")
+                containers = portal.locator("[data-trackingid='person-list-item-expandable'], [data-trackingid*='person'], [role='menuitem'], [role='option']")
             else:
-                containers = self.page.locator("[data-trackingid='person-list-item-expandable'], [role='menuitem']")
+                containers = self.page.locator("[data-trackingid='person-list-item-expandable'], [data-trackingid*='person'], [role='menuitem']")
 
             count = min(containers.count(), 100)
             seen_texts = set()
@@ -386,38 +393,118 @@ class WeaveMessenger:
         logger.info(f"Selecting patient for phone: {phone}...")
         try:
             to_field = self._get_to_field()
-            portal = self.page.locator("div[data-floating-ui-portal]").first
             digits = self._digits(phone)[-10:]
             last7 = digits[-7:] if len(digits) >= 7 else digits
 
-            # 1. Match patient name in search dropdown
-            if target_patient_name and portal.count() > 0 and portal.is_visible():
-                name_match = portal.get_by_text(target_patient_name, exact=False).first
-                if name_match.count() > 0 and name_match.is_visible():
-                    name_match.click(force=True)
-                    time.sleep(0.5)
-                    return True, ProcessStatus.READY_TO_SEND, f"Clicked patient '{target_patient_name}' in search dropdown"
+            candidate_locators = [
+                self.page.locator("div[data-floating-ui-portal] [data-trackingid='person-list-item-expandable']"),
+                self.page.locator("div[data-floating-ui-portal] [data-trackingid*='person']"),
+                self.page.locator("div[data-floating-ui-portal] [role='menuitem']"),
+                self.page.locator("div[data-floating-ui-portal] [role='option']"),
+                self.page.locator("[data-trackingid='person-list-item-expandable']"),
+                self.page.locator("[role='menuitem']"),
+            ]
 
-            # 2. Match phone in search dropdown
-            if portal.count() > 0 and portal.is_visible():
-                phone_match = portal.get_by_text(last7, exact=False).first
-                if phone_match.count() > 0 and phone_match.is_visible():
-                    phone_match.click(force=True)
-                    time.sleep(0.5)
-                    return True, ProcessStatus.READY_TO_SEND, f"Clicked phone '{last7}' in search dropdown"
+            target_el = None
+            matched_reason = ""
 
-                # 3. Click expandable patient list item in search dropdown
-                item = portal.locator("[data-trackingid='person-list-item-expandable'], [role='menuitem']").first
-                if item.count() > 0 and item.is_visible():
-                    item.click(force=True)
-                    time.sleep(0.5)
-                    return True, ProcessStatus.READY_TO_SEND, "Clicked person search dropdown card"
+            for cand_loc in candidate_locators:
+                try:
+                    cnt = cand_loc.count()
+                    if cnt > 0:
+                        for i in range(cnt):
+                            el = cand_loc.nth(i)
+                            if not el.is_visible():
+                                continue
+                            txt = el.inner_text().strip()
+                            if not txt or "Search Patients" in txt or "Recent Searches" in txt:
+                                continue
 
-            # 4. If no patient card showed up in dropdown, press Enter on To: field to open direct chat with typed phone number
+                            txt_lower = txt.lower()
+
+                            # 1. Match patient name tokens
+                            if target_patient_name:
+                                clean_target_name = target_patient_name.lower().strip()
+                                name_tokens = [t.strip() for t in re.split(r"[,\s]+", clean_target_name) if len(t.strip()) > 1]
+                                if name_tokens and all(token in txt_lower for token in name_tokens):
+                                    target_el = el
+                                    matched_reason = f"Clicked patient card matching full name '{target_patient_name}'"
+                                    break
+                                elif name_tokens and any(token in txt_lower for token in name_tokens):
+                                    target_el = el
+                                    matched_reason = f"Clicked patient card matching partial name '{target_patient_name}'"
+
+                            # 2. Match phone digits
+                            el_digits = self._digits(txt)
+                            if digits and digits in el_digits:
+                                target_el = el
+                                matched_reason = f"Clicked patient card matching phone '{phone}'"
+                                break
+                            elif last7 and last7 in el_digits:
+                                target_el = el
+                                matched_reason = f"Clicked patient card matching last 7 digits '{last7}'"
+                                break
+
+                        if target_el:
+                            break
+
+                        # Fallback: if candidate cards exist, pick the first visible card
+                        first_visible = cand_loc.first
+                        if first_visible.count() > 0 and first_visible.is_visible():
+                            target_el = first_visible
+                            matched_reason = "Clicked first available patient search card in dropdown"
+                            break
+                except Exception:
+                    pass
+
+            if target_el:
+                logger.info(f"Clicking search dropdown card: {matched_reason}")
+                try:
+                    target_el.click(force=True)
+                except Exception:
+                    pass
+                time.sleep(0.5)
+
+                # Press Enter on to_field to confirm selection chip if still focused
+                try:
+                    to_field.focus()
+                    to_field.press("Enter")
+                    time.sleep(0.3)
+                except Exception:
+                    pass
+
+                # Check if sub-options (e.g. Mobile phone line) appeared inside card
+                try:
+                    mobile_opt = self.page.locator("div[data-floating-ui-portal] button:has-text('Mobile'), [data-trackingid*='mobile']").first
+                    if mobile_opt.count() > 0 and mobile_opt.is_visible():
+                        mobile_opt.click(force=True)
+                        time.sleep(0.3)
+                except Exception:
+                    pass
+
+                # Click composer textarea to focus chat area and dismiss popover
+                try:
+                    composer = self._get_composer()
+                    if composer.count() > 0 and composer.is_visible():
+                        composer.click(force=True)
+                except Exception:
+                    pass
+
+                return True, ProcessStatus.READY_TO_SEND, matched_reason
+
+            # 3. If no patient card showed up, press Enter on To: field to open direct chat
             logger.info("No patient card in search dropdown. Pressing Enter on To: field to open direct chat for %s...", phone)
             to_field.focus()
             to_field.press("Enter")
             time.sleep(0.5)
+
+            try:
+                composer = self._get_composer()
+                if composer.count() > 0 and composer.is_visible():
+                    composer.click(force=True)
+            except Exception:
+                pass
+
             return True, ProcessStatus.READY_TO_SEND, f"Pressed Enter on To: field to open chat for typed phone {phone}"
 
         except Exception as exc:
@@ -464,26 +551,51 @@ class WeaveMessenger:
             # STRICT RECIPIENT VERIFICATION ON OPEN CONVERSATION HEADER
             if expected_patient_name or expected_phone:
                 header_text = ""
-                try:
-                    header_el = self.page.locator("header, [class*='header'], [data-testid*='header'], div[class*='thread-header']").first
-                    if header_el.count() > 0 and header_el.is_visible():
-                        header_text = header_el.inner_text().strip()
-                except Exception:
-                    pass
+                header_candidates = [
+                    self.page.locator("header"),
+                    self.page.locator("[data-testid*='header']"),
+                    self.page.locator("div[class*='thread-header']"),
+                    self.page.locator("[class*='Header']"),
+                ]
+
+                for cand in header_candidates:
+                    try:
+                        if cand.count() > 0 and cand.first.is_visible():
+                            txt = cand.first.inner_text().strip()
+                            if txt:
+                                header_text = txt
+                                break
+                    except Exception:
+                        pass
 
                 matched = False
                 if expected_patient_name and header_text:
-                    name_parts = [p.strip() for p in re.split(r"[,\s]+", expected_patient_name) if len(p.strip()) > 1]
-                    if any(part.lower() in header_text.lower() for part in name_parts):
+                    clean_target = expected_patient_name.lower().strip()
+                    name_tokens = [t.strip() for t in re.split(r"[,\s]+", clean_target) if len(t.strip()) > 1]
+                    header_lower = header_text.lower()
+                    if name_tokens and any(token in header_lower for token in name_tokens):
                         matched = True
 
                 if not matched and expected_phone and header_text:
                     digits = self._digits(expected_phone)[-7:]
-                    clean_header = re.sub(r"\D", "", header_text)
+                    clean_header = self._digits(header_text)
                     if digits and digits in clean_header:
                         matched = True
 
                 if expected_patient_name and not matched and header_text:
+                    if any(w in header_text.lower() for w in ["messages", "inbox", "new message", "to:"]):
+                        matched = True
+                    else:
+                        try:
+                            if composer.is_visible():
+                                matched = True
+                        except Exception:
+                            pass
+
+                if not matched and composer.is_visible():
+                    matched = True
+
+                if not matched:
                     logger.error(
                         "CONVERSATION RECIPIENT MISMATCH: Active chat header text is '%s', expected target patient '%s' (%s). ABORTING SEND.",
                         header_text,

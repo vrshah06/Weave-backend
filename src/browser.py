@@ -63,7 +63,10 @@ class BrowserManager:
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",
+            "--disable-blink-features=AutomationControlled",
         ]
+
+        user_agent_str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
         try:
             self.context = self.playwright.chromium.launch_persistent_context(
@@ -71,6 +74,7 @@ class BrowserManager:
                 headless=self.headless,
                 slow_mo=self.slow_mo,
                 viewport={"width": 1440, "height": 900},
+                user_agent=user_agent_str,
                 args=chromium_args,
             )
         except Exception as exc:
@@ -82,6 +86,7 @@ class BrowserManager:
                     headless=self.headless,
                     slow_mo=self.slow_mo,
                     viewport={"width": 1440, "height": 900},
+                    user_agent=user_agent_str,
                     args=chromium_args,
                 )
             except Exception as e2:
@@ -91,7 +96,10 @@ class BrowserManager:
                     slow_mo=self.slow_mo,
                     args=chromium_args,
                 )
-                self.context = browser.new_context(viewport={"width": 1440, "height": 900})
+                self.context = browser.new_context(
+                    viewport={"width": 1440, "height": 900},
+                    user_agent=user_agent_str,
+                )
 
         self.context.set_default_timeout(self.default_timeout)
 
@@ -99,6 +107,11 @@ class BrowserManager:
             self.page = self.context.pages[0]
         else:
             self.page = self.context.new_page()
+
+        try:
+            self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        except Exception:
+            pass
 
         return self.context, self.page
 

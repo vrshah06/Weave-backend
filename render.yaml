@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: weave-backend
+    env: node
+    buildCommand: npm install && pip install -r requirements.txt && python -m playwright install chromium && python -m playwright install-deps chromium
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HEADLESS
+        value: "true"
+      - key: DEFAULT_TIMEOUT
+        value: "30000"
+      - key: SEARCH_TIMEOUT
+        value: "30000"
+      - key: MESSAGE_LOAD_TIMEOUT
+        value: "30000"
+      - key: MONGODB_URI
+        sync: false
+      - key: WEAVE_EMAIL
+        sync: false
+      - key: WEAVE_PASSWORD
+        sync: false

@@ -276,6 +276,7 @@ def process_appointments(
                 ok, status = weave.open_messages()
                 if not ok:
                     logger.error("Failed to open Messages for patient %s: %s", appointment.patient_name, status.value)
+                    logger.info("[EVENT] %s", json.dumps({"type": "PATIENT_FAILED", "patient_name": appointment.patient_name, "phone": masked_phone, "reason": f"Failed to open Messages ({status.value})"}))
                     capture_screenshot(page, f"row_{appointment.row_index}_messages_{status.value}", appointment.row_index)
                     stats["failed"] += 1
                     continue
@@ -284,6 +285,7 @@ def process_appointments(
                 ok, status = weave.open_new_message()
                 if not ok:
                     logger.error("Failed to open New Message for patient %s: %s", appointment.patient_name, status.value)
+                    logger.info("[EVENT] %s", json.dumps({"type": "PATIENT_FAILED", "patient_name": appointment.patient_name, "phone": masked_phone, "reason": f"Failed to open New Message ({status.value})"}))
                     capture_screenshot(page, f"row_{appointment.row_index}_new_msg_{status.value}", appointment.row_index)
                     stats["failed"] += 1
                     continue
@@ -350,7 +352,6 @@ def process_appointments(
                     )
                     continue
 
-
                 logger.info("Recipient selected and verified.")
 
                 # 6. Wait for conversation and verify recipient again
@@ -376,6 +377,7 @@ def process_appointments(
                         )
                     )
 
+                    logger.info("[EVENT] %s", json.dumps({"type": "PATIENT_FAILED", "patient_name": appointment.patient_name, "phone": masked_phone, "reason": f"Conversation verification failed ({status.value})"}))
                     stats["failed"] += 1
                     capture_screenshot(
                         page,
@@ -419,6 +421,7 @@ def process_appointments(
                         )
                     )
 
+                    logger.info("[EVENT] %s", json.dumps({"type": "PATIENT_FAILED", "patient_name": appointment.patient_name, "phone": masked_phone, "reason": f"Message composition failed ({status.value})"}))
                     stats["failed"] += 1
                     capture_screenshot(
                         page,
@@ -448,6 +451,7 @@ def process_appointments(
                         )
                     )
 
+                    logger.info("[EVENT] %s", json.dumps({"type": "PATIENT_FAILED", "patient_name": appointment.patient_name, "phone": masked_phone, "reason": f"Pre-send verification failed ({status.value})"}))
                     stats["failed"] += 1
                     capture_screenshot(
                         page,
