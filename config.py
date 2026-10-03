@@ -26,8 +26,9 @@ WEAVE_AUTH_URL = os.getenv("WEAVE_AUTH_URL", "https://auth.getweave.com")
 WEAVE_APP_URL = os.getenv("WEAVE_APP_URL", "https://app.getweave.com")
 WEAVE_MESSAGES_URL = os.getenv("WEAVE_MESSAGES_URL", "https://app.getweave.com/messages/inbox")
 
-# Browser Configuration
-HEADLESS = os.getenv("HEADLESS", "False").lower() in ("true", "1", "t")
+# Browser Configuration (Default to HEADLESS=True on Linux/Render server)
+headless_env = os.getenv("HEADLESS", "True" if os.name != "nt" or os.getenv("NODE_ENV") == "production" else "False").lower()
+HEADLESS = headless_env in ("true", "1", "t", "yes")
 SLOW_MO = int(os.getenv("SLOW_MO", "100"))
 DEFAULT_TIMEOUT = int(os.getenv("DEFAULT_TIMEOUT", "15000"))
 SEARCH_TIMEOUT = int(os.getenv("SEARCH_TIMEOUT", "20000"))

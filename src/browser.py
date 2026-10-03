@@ -40,11 +40,19 @@ class BrowserManager:
 
         self.playwright = sync_playwright().start()
 
+        chromium_args = [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+        ]
+
         self.context = self.playwright.chromium.launch_persistent_context(
             user_data_dir=str(self.profile_dir),
             headless=self.headless,
             slow_mo=self.slow_mo,
             viewport={"width": 1440, "height": 900},
+            args=chromium_args,
         )
 
         self.context.set_default_timeout(self.default_timeout)
