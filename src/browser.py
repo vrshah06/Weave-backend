@@ -57,7 +57,14 @@ class BrowserManager:
     def start(self) -> Tuple[BrowserContext, Page]:
         self.profile_dir.mkdir(parents=True, exist_ok=True)
 
+        logger.info("[INFO] Starting Playwright engine...")
         self.playwright = sync_playwright().start()
+
+        try:
+            exe_path = self.playwright.chromium.executable_path
+            logger.info(f"[INFO] Playwright Chromium executable found at: {exe_path}")
+        except Exception:
+            logger.warning("[WARNING] Could not determine Playwright Chromium executable path directly.")
 
         chromium_args = [
             "--no-sandbox",
@@ -69,6 +76,7 @@ class BrowserManager:
 
         user_agent_str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
+        logger.info(f"[INFO] Launching Playwright Chromium (Headless: {self.headless})...")
         try:
             self.context = self.playwright.chromium.launch_persistent_context(
                 user_data_dir=str(self.profile_dir),
@@ -78,6 +86,7 @@ class BrowserManager:
                 user_agent=user_agent_str,
                 args=chromium_args,
             )
+            logger.info("[SUCCESS] Persistent Chromium browser context created successfully.")
         except Exception as exc:
             logger.warning(f"launch_persistent_context failed: {exc}. Attempting Chromium install and launch fallback...")
             self._ensure_chromium_installed()

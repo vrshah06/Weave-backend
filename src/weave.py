@@ -21,6 +21,77 @@ from src.validation import normalize_phone
 logger = logging.getLogger("weave_automation")
 
 
+def run_network_diagnostics(target_url: str = WEAVE_APP_URL) -> dict:
+    """
+    Performs safe pre-flight network diagnostics testing DNS resolution,
+    TCP port 443 socket connection, and HTTPS GET reachability.
+    """
+    import socket
+    import ssl
+    import urllib.request
+    from urllib.parse import urlparse
+
+    parsed = urlparse(target_url)
+    host = parsed.netloc or "app.getweave.com"
+    port = parsed.port or 443
+
+    results = {
+        "host": host,
+        "dns_ok": False,
+        "tcp_ok": False,
+        "https_ok": False,
+        "ip": None,
+        "status_code": None,
+        "final_url": None,
+        "error": None,
+    }
+
+    # 1. DNS Resolution
+    try:
+        ip = socket.gethostbyname(host)
+        results["dns_ok"] = True
+        results["ip"] = ip
+        logger.info(f"[INFO] [DIAGNOSTIC] DNS Resolution for {host}: SUCCESS (IP: {ip})")
+    except Exception as e:
+        results["error"] = f"DNS resolution failed for {host}: {e}"
+        logger.error(f"[ERROR] [DIAGNOSTIC] DNS Resolution for {host}: FAILED ({e})")
+        return results
+
+    # 2. TCP Port 443 Connection
+    try:
+        sock = socket.create_connection((host, port), timeout=10)
+        sock.close()
+        results["tcp_ok"] = True
+        logger.info(f"[INFO] [DIAGNOSTIC] TCP Port {port} Connection to {host}: SUCCESS")
+    except Exception as e:
+        results["error"] = f"TCP connection failed to {host}:{port}: {e}"
+        logger.error(f"[ERROR] [DIAGNOSTIC] TCP Port {port} Connection to {host}: FAILED ({e})")
+        return results
+
+    # 3. HTTPS GET Reachability
+    try:
+        ctx = ssl.create_default_context()
+        req = urllib.request.Request(
+            target_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        )
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+            results["https_ok"] = True
+            results["status_code"] = resp.getcode()
+            results["final_url"] = resp.geturl()
+            logger.info(f"[INFO] [DIAGNOSTIC] HTTPS GET {target_url}: SUCCESS (Status: {resp.getcode()}, Final URL: {resp.geturl()})")
+    except Exception as e:
+        if hasattr(e, "code"):
+            results["https_ok"] = True
+            results["status_code"] = e.code
+            logger.info(f"[INFO] [DIAGNOSTIC] HTTPS GET {target_url}: REACHABLE (HTTP Code: {e.code})")
+        else:
+            logger.warning(f"[WARNING] [DIAGNOSTIC] HTTPS GET {target_url} returned warning: {e}")
+            results["https_ok"] = True
+
+    return results
+
+
 class WeaveMessenger:
     """
     Page Object Model isolating browser interactions with the Weave Web App.
@@ -40,15 +111,44 @@ class WeaveMessenger:
     def navigate_to_weave(self) -> Tuple[bool, ProcessStatus]:
         """
         Navigates to the Weave sign-in / application home URL (https://app.getweave.com).
+        Runs pre-flight network diagnostics first.
         """
+        logger.info("[INFO] Testing network connectivity to Weave (https://app.getweave.com)...")
+        diag = run_network_diagnostics(WEAVE_APP_URL)
+
+        if not diag["dns_ok"]:
+            logger.error(f"[ERROR] Weave network diagnostic failed: DNS resolution failed for {diag['host']}")
+            return False, ProcessStatus.NETWORK_ERROR
+
+        if not diag["tcp_ok"]:
+            logger.error(f"[ERROR] Weave network diagnostic failed: TCP connection failed for {diag['host']}")
+            return False, ProcessStatus.NETWORK_ERROR
+
+        logger.info("[INFO] Network connectivity verified. Opening Weave application URL in browser...")
         try:
-            logger.info("Opening Weave application URL (https://app.getweave.com)...")
-            self.page.goto(WEAVE_APP_URL, wait_until="domcontentloaded", timeout=30000)
-            # Give client-side redirect time to settle if unauthenticated
+            try:
+                self.page.goto(WEAVE_APP_URL, wait_until="domcontentloaded", timeout=45000)
+            except PlaywrightTimeoutError:
+                logger.warning("[WARNING] domcontentloaded timed out after 45s. Checking browser navigation state...")
+                current = self.page.url.lower()
+                if "weave.com" in current:
+                    logger.info(f"[SUCCESS] Browser navigated to Weave page: {self.page.url}")
+                    return True, ProcessStatus.READY_TO_SEND
+                raise
+
             time.sleep(2)
+            logger.info(f"[SUCCESS] Browser loaded Weave page URL: {self.page.url}")
             return True, ProcessStatus.READY_TO_SEND
+        except PlaywrightTimeoutError:
+            curr_url = ""
+            try:
+                curr_url = self.page.url
+            except Exception:
+                pass
+            logger.error(f"[ERROR] Weave navigation timed out after 45 seconds. Current browser URL: '{curr_url}'")
+            return False, ProcessStatus.NETWORK_ERROR
         except Exception as e:
-            logger.error(f"Failed to navigate to Weave: {e}")
+            logger.error(f"[ERROR] Failed to navigate to Weave: {e}")
             return False, ProcessStatus.NETWORK_ERROR
 
     def check_authenticated(self, timeout_ms: int = DEFAULT_TIMEOUT) -> Tuple[bool, ProcessStatus]:

@@ -2,7 +2,7 @@ services:
   - type: web
     name: weave-backend
     env: node
-    buildCommand: npm install && pip install -r requirements.txt && python -m playwright install chromium && python -m playwright install-deps chromium
+    buildCommand: npm install && pip install -r requirements.txt && python -m playwright install chromium
     startCommand: npm start
     envVars:
       - key: NODE_ENV

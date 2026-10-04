@@ -227,9 +227,19 @@ def process_appointments(
         # --------------------------------------------------------------
         logger.info("[EVENT] %s", json.dumps({"type": "AUTH_START"}))
         if not authenticate_weave(weave):
+            logger.error("[ERROR] Weave initialization/authentication failed. Aborting automation run.")
             logger.info("[EVENT] %s", json.dumps({"type": "AUTH_FAILED"}))
             capture_screenshot(page, "authentication_failed")
-            return
+            for appointment in appointments:
+                m_phone = mask_phone(appointment.phone)
+                logger.info("[EVENT] %s", json.dumps({
+                    "type": "PATIENT_FAILED",
+                    "patient_name": appointment.patient_name,
+                    "phone": m_phone,
+                    "reason": "Infrastructure Failure: Could not connect to Weave application or authenticate session."
+                }))
+            stats["failed"] = len(appointments)
+            sys.exit(1)
         logger.info("[EVENT] %s", json.dumps({"type": "AUTH_SUCCESS"}))
 
         # --------------------------------------------------------------
