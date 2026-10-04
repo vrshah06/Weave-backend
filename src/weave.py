@@ -154,52 +154,50 @@ class WeaveMessenger:
     def check_authenticated(self, timeout_ms: int = DEFAULT_TIMEOUT) -> Tuple[bool, ProcessStatus]:
         """
         Verifies if the current session is authenticated in Weave.
-        Explicitly checks for login form elements or auth redirect.
+        Explicitly checks for login form elements, auth redirect, or navigation shell.
         """
         try:
-            time.sleep(1.5)
-            url = self.page.url.lower()
-
-            if "auth.getweave.com" in url:
-                logger.info("Current URL is on auth.getweave.com. Session not active.")
-                return False, ProcessStatus.SESSION_EXPIRED
-
-            # Check if login form or credentials fields are visible on screen
-            login_form_indicators = [
-                self.page.locator("input[type='password']"),
-                self.page.get_by_placeholder("Email", exact=False),
-                self.page.get_by_text("Log in to your Weave account", exact=False),
-                self.page.get_by_role("button", name=re.compile(r"^\s*log\s*in\s*$", re.I)),
-            ]
-
-            for indicator in login_form_indicators:
+            start_time = time.time()
+            max_wait = 10.0  # seconds to wait for a definitive state
+            
+            while time.time() - start_time < max_wait:
+                url = self.page.url.lower()
+                
+                # If we've been redirected to auth, we are definitely NOT authenticated
+                if "auth.getweave.com" in url:
+                    logger.info("Current URL is on auth.getweave.com. Session not active.")
+                    return False, ProcessStatus.SESSION_EXPIRED
+                    
+                # Check if login form is visible
                 try:
-                    if indicator.count() > 0 and indicator.first.is_visible():
+                    email_field = self.page.locator("input[type='password'], input[type='email'], input[name='username']").first
+                    if email_field.count() > 0 and email_field.is_visible(timeout=50):
                         logger.info("Login form detected on page. Session not active.")
                         return False, ProcessStatus.SESSION_EXPIRED
                 except Exception:
                     pass
+                    
+                # Check if app shell is visible (we are logged in)
+                try:
+                    shell = (
+                        self.page.locator("nav")
+                        .or_(self.page.locator("aside"))
+                        .or_(self.page.get_by_role("link", name=re.compile(r"Messages", re.I)))
+                        .or_(self.page.locator("a[href*='/messages']"))
+                        .or_(self.page.locator("[data-trackingid='inbox-list-new-message-button']"))
+                    ).first
+                    
+                    if shell.count() > 0 and shell.is_visible(timeout=50):
+                        logger.info("Weave navigation shell detected. Session is active.")
+                        return True, ProcessStatus.READY_TO_SEND
+                except Exception:
+                    pass
+                
+                time.sleep(0.5)
 
-            # Check if app navigation shell is visible
-            shell = (
-                self.page.locator("nav")
-                .or_(self.page.locator("aside"))
-                .or_(self.page.get_by_role("link", name=re.compile(r"Messages", re.I)))
-                .or_(self.page.locator("a[href*='/messages']"))
-            ).first
-
-            try:
-                shell.wait_for(state="visible", timeout=min(timeout_ms, 5000))
-                logger.info("Weave navigation shell detected. Session is active.")
-                return True, ProcessStatus.READY_TO_SEND
-            except Exception:
-                pass
-
-            # Fallback check on app.getweave.com URL without login fields
-            if "app.getweave.com" in url:
-                return True, ProcessStatus.READY_TO_SEND
-
+            logger.error("Could not determine authentication state within timeout (no login form and no app shell).")
             return False, ProcessStatus.WEAVE_NOT_LOADED
+            
         except Exception as e:
             logger.error(f"Error checking authentication: {e}")
             return False, ProcessStatus.WEAVE_NOT_LOADED
@@ -309,38 +307,58 @@ class WeaveMessenger:
 
     def open_messages(self, timeout_ms: int = DEFAULT_TIMEOUT) -> Tuple[bool, ProcessStatus]:
         """
-        Navigates to Messages section by clicking the Messages sidebar link/icon on the left navigation bar.
-        Always clicks the Messages navigation sidebar item after loading sign-in / app URL.
+        Navigates to Messages section by clicking the Messages sidebar link/icon on the left navigation bar,
+        or navigating directly via URL.
         """
         try:
-            logger.info("Clicking 'Messages' link on the left navigation bar...")
-
-            # Locate Messages link/icon in left navigation sidebar
-
-            messages_link = (
-                self.page.get_by_role("link", name=re.compile(r"^\s*Messages\s*$", re.I))
-                .or_(self.page.locator("a[href*='/messages']"))
-                .or_(self.page.locator("nav a:has-text('Messages')"))
-                .or_(self.page.locator("aside a:has-text('Messages')"))
-                .or_(self.page.locator("[aria-label*='Messages']"))
-                .or_(self.page.get_by_text("Messages", exact=True))
-            ).first
-
-            messages_link.wait_for(state="visible", timeout=timeout_ms)
-            messages_link.click(force=True)
-
             inbox_heading = (
                 self.page.locator("[data-trackingid='inbox-list-new-message-button']")
+                .or_(self.page.locator("[data-fabric-ds-name='Button']:has-text('New Message')"))
                 .or_(self.page.get_by_text("Inbox", exact=True))
                 .or_(self.page.get_by_role("button", name="New Message"))
+                .or_(self.page.get_by_text("New Message"))
             ).first
-            inbox_heading.wait_for(state="visible", timeout=timeout_ms)
+            
+            try:
+                # Fast check if already there
+                if inbox_heading.is_visible():
+                    logger.info("Already on Messages page (New Message button is visible). Skipping URL load.")
+                    return True, ProcessStatus.READY_TO_SEND
+            except Exception:
+                pass
 
-            logger.info("Successfully opened Messages via left navigation bar click.")
+            logger.info(f"Navigating to Messages URL directly: {WEAVE_MESSAGES_URL}")
+            self.page.goto(WEAVE_MESSAGES_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+            
+            inbox_heading.wait_for(state="visible", timeout=timeout_ms)
+            logger.info("Successfully opened Messages via direct URL navigation.")
             return True, ProcessStatus.READY_TO_SEND
+            
         except Exception as exc:
-            logger.error(f"Failed to click Messages sidebar link: {exc}")
-            return False, ProcessStatus.MESSAGES_NOT_FOUND
+            logger.error(f"Failed to navigate to Messages directly: {exc}")
+            logger.info("Falling back to clicking 'Messages' link on the left navigation bar...")
+            
+            try:
+                # Locate Messages link/icon in left navigation sidebar
+                messages_link = (
+                    self.page.get_by_role("link", name=re.compile(r"^\s*Messages\s*$", re.I))
+                    .or_(self.page.locator("a[href*='/messages']"))
+                    .or_(self.page.locator("nav a:has-text('Messages')"))
+                    .or_(self.page.locator("aside a:has-text('Messages')"))
+                    .or_(self.page.locator("[aria-label*='Messages']"))
+                    .or_(self.page.get_by_text("Messages", exact=True))
+                ).first
+
+                messages_link.wait_for(state="visible", timeout=timeout_ms)
+                messages_link.click(force=True)
+
+                inbox_heading.wait_for(state="visible", timeout=timeout_ms)
+
+                logger.info("Successfully opened Messages via left navigation bar click.")
+                return True, ProcessStatus.READY_TO_SEND
+            except Exception as e2:
+                logger.error(f"Failed to click Messages sidebar link: {e2}")
+                return False, ProcessStatus.MESSAGES_NOT_FOUND
 
     # =========================================================================
     # 2. NEW MESSAGE WORKFLOW
@@ -369,7 +387,18 @@ class WeaveMessenger:
             new_btn.click(force=True)
 
             to_field = self._get_to_field()
-            to_field.wait_for(state="visible", timeout=timeout_ms)
+            
+            try:
+                to_field.wait_for(state="visible", timeout=timeout_ms)
+            except PlaywrightTimeoutError:
+                logger.warning("To: field did not appear. Weave UI might be stuck on a previous thread. Reloading page...")
+                self.page.goto(WEAVE_MESSAGES_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+                time.sleep(2)
+                
+                new_btn.wait_for(state="visible", timeout=timeout_ms)
+                new_btn.click(force=True)
+                to_field.wait_for(state="visible", timeout=timeout_ms)
+
             logger.info("'New Message' composer opened (To: field visible).")
             return True, ProcessStatus.READY_TO_SEND
         except Exception as exc:

@@ -261,3 +261,18 @@ timestamp,patient_name,phone,appointment_date,appointment_time,status,error,mess
 2026-10-01 22:09:49,"ONEAL, SANDRA",786-712-1103,10/02/2026,10:30 AM,NO_RECIPIENT_FOUND,No matching contact found in search for phone '786-712-1103',,+17867121103_10/02/2026_10:30 am
 2026-10-01 22:09:54,"GRAHAM, LINDA",772-306-3420,10/02/2026,10:30 AM,NO_RECIPIENT_FOUND,No matching contact found in search for phone '772-306-3420',,+17723063420_10/02/2026_10:30 am
 2026-10-01 22:10:00,"SMEDS, RHAINA",772-485-4008,10/02/2026,10:30 AM,NO_RECIPIENT_FOUND,No matching contact found in search for phone '772-485-4008',,+17724854008_10/02/2026_10:30 am
+2026-10-04 14:56:32,"LEWIS, DAVID",520-280-8476,2026-10-05,8:30 AM,READY_TO_SEND,,8c88e92096d46744e35668bf6dadee33c932a9b819a151879650dd3a05966599,+15202808476_2026-10-05_8:30 am
+2026-10-04 14:57:10,"SILVA, JOSEPH",954-658-9299,2026-10-05,9:00 AM,MESSAGE_INPUT_NOT_FOUND,Message composition failed,f70553e983718f600828ba9d20dbd3d4335e1867f8a5a6482baf421a2d41c01d,+19546589299_2026-10-05_9:00 am
+2026-10-04 15:14:15,"LEWIS, DAVID",520-280-8476,2026-10-05,8:30 AM,FAILED,"Selection failed: Locator.focus: Timeout 15000ms exceeded.
+Call log:
+  - waiting for locator(""input[data-trackingid='inbox-thread-new-message-to-field']"").first
+",,+15202808476_2026-10-05_8:30 am
+2026-10-04 15:15:00,"SILVA, JOSEPH",954-658-9299,2026-10-05,9:00 AM,MESSAGE_INPUT_NOT_FOUND,Message composition failed,f70553e983718f600828ba9d20dbd3d4335e1867f8a5a6482baf421a2d41c01d,+19546589299_2026-10-05_9:00 am
+2026-10-04 15:15:22,"FOGG, RALPH",772-201-7312,2026-10-05,9:30 AM,FAILED,"Selection failed: Locator.focus: Timeout 15000ms exceeded.
+Call log:
+  - waiting for locator(""input[data-trackingid='inbox-thread-new-message-to-field']"").first
+",,+17722017312_2026-10-05_9:30 am
+2026-10-04 16:09:01,"LEWIS, DAVID",520-280-8476,2026-10-05,8:30 AM,FAILED,"Selection failed: Locator.focus: Timeout 15000ms exceeded.
+Call log:
+  - waiting for locator(""input[data-trackingid='inbox-thread-new-message-to-field']"").first
+",,+15202808476_2026-10-05_8:30 am

@@ -39,7 +39,8 @@ def setup_logger(name: str = "weave_automation") -> logging.Logger:
     file_handler.setLevel(logging.INFO)
 
     # Console Handler
-    console_handler = logging.StreamHandler()
+    import sys
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     console_handler.setLevel(logging.INFO)
 
