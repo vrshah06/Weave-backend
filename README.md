@@ -1,15 +1,15 @@
 # Weave Backend & Automation Service
 
-FastAPI (+ Socket.IO / SSE) API server and Playwright automation engine for Weave appointment reminders. This repo is API-only; the frontend is deployed separately.
+FastAPI API server and Playwright automation engine for Weave appointment reminders. This repo is API-only; the frontend is deployed separately.
 
 ## Features
 - **REST API** (`/api/*`): CSV import, appointments, patients, automation runs, message history, settings.
-- **Real-time events**: Socket.IO and Server-Sent Events (`/api/automation/events`).
-- **Automation engine**: Playwright drives Weave message composition and delivery (`main.py`, run as a subprocess per run).
+- **Live run updates**: Server-Sent Events at `GET /api/automation/events`.
+- **Automation engine**: Playwright drives Weave message composition and delivery (`run_reminders.py`, run as a subprocess per run).
 - **Deduplication & header verification** to prevent misdirected messages.
 
 ## Tech Stack
-- Python 3.10+, FastAPI, Uvicorn, python-socketio, Motor (MongoDB), Playwright
+- Python 3.10+, FastAPI, Uvicorn, Motor (MongoDB), Playwright
 
 ## Setup
 
@@ -23,14 +23,12 @@ cp .env.example .env              # then fill in MONGODB_URI, WEAVE_EMAIL, WEAVE
 
 ## Running
 
-Always serve `app:sio_app` (the Socket.IO-wrapped app). `app:app` serves the REST API only.
-
 ```bash
 # Development (auto-reload)
-uvicorn app:sio_app --reload --port 5000
+uvicorn app:app --reload --port 5000
 
 # Production
-uvicorn app:sio_app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
+uvicorn app:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
 ```
 
 Health check: `GET /api/health`. Interactive API docs: `/docs`.
@@ -45,10 +43,38 @@ See `.env.example`. Key variables:
 | `WEAVE_EMAIL` / `WEAVE_PASSWORD` | Weave account used by the automation |
 | `HEADLESS` | Run Chromium headless (`true` in production) |
 
+## Project Structure
+Requests flow `routes → controllers → services → repositories → MongoDB`.
+
+```
+app.py                     FastAPI app: CORS, error handlers, router mount
+run_reminders.py           Automation CLI; spawned once per run by the API
+core/
+  config.py                Environment-driven settings
+  database.py              MongoDB (Motor) client
+  event_stream.py          SSE publish/subscribe
+  exceptions.py            Domain errors (mapped to HTTP codes in app.py)
+routes/                    Endpoint declarations only (paths, params, dependencies)
+controllers/               Request parsing and response envelopes
+services/                  Business logic
+  automation_runner.py     Spawns run_reminders.py, turns its [EVENT] output into DB updates + SSE events
+repositories/              All MongoDB queries, one module per collection
+utils/                     Pure helpers (CSV parsing, formatting)
+automation/                Playwright engine
+  browser_manager.py       Chromium lifecycle
+  weave_messenger.py       Weave UI navigation and message sending
+  message_templates.py     Reminder text generation
+  validation.py            Row/phone validation, dedup keys
+  deduplication.py         Prevents duplicate reminders (logs/reminder_log.csv)
+  models.py                Dataclasses and status enums
+  logging_utils.py         Logger, phone masking, error screenshots
+tests/                     pytest suite
+```
+
 ## Run the automation CLI directly (optional)
 ```bash
-python main.py --dry-run --file data/appointments.csv   # compose & verify, no send
-python main.py --send --file data/appointments.csv      # send
+python run_reminders.py --dry-run --file data/appointments.csv   # compose & verify, no send
+python run_reminders.py --send --file data/appointments.csv      # send
 ```
 
 ## Tests

@@ -9,9 +9,9 @@ __pycache__/
 # Playwright Browser Profile
 weave-profile/
 
-# Logs & temp CSV runs
-logs/*.log
-data/temp_run_*.csv
+# Runtime logs, screenshots & patient data (never commit)
+logs/
+data/
 
 # Environment variables
 .env

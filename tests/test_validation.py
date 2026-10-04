@@ -1,5 +1,5 @@
 import pytest
-from src.validation import normalize_phone, generate_dedup_key, validate_appointment_row
+from automation.validation import normalize_phone, generate_dedup_key, validate_appointment_row
 
 
 def test_normalize_phone():
