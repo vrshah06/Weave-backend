@@ -3,8 +3,10 @@ import asyncio
 import json
 from datetime import datetime
 
+from config import CORS_ORIGINS
+
 # We use an async server for FastAPI
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
+sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*' if CORS_ORIGINS == ['*'] else CORS_ORIGINS)
 
 # Global list of active queues for SSE clients
 sse_queues = []

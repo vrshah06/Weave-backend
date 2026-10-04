@@ -19,5 +19,12 @@ def get_db():
         db = client[db_name]
     return db
 
+def close_db():
+    global client, db
+    if client is not None:
+        client.close()
+    client = None
+    db = None
+
 def is_db_connected():
     return client is not None

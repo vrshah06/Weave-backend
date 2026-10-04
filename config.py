@@ -17,6 +17,12 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+# API Configuration
+# Comma-separated list of allowed origins for CORS / Socket.IO. Falls back to FRONTEND_URL, then "*".
+CORS_ORIGINS = [
+    o.strip() for o in os.getenv("CORS_ORIGINS", os.getenv("FRONTEND_URL", "*")).split(",") if o.strip()
+]
+
 # Weave Account Credentials
 WEAVE_EMAIL = os.getenv("WEAVE_EMAIL", "")
 WEAVE_PASSWORD = os.getenv("WEAVE_PASSWORD", "")

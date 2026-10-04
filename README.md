@@ -1,59 +1,57 @@
 # Weave Backend & Automation Service
 
-Node.js (Express + Socket.io) API Backend server & Playwright Python Automation Engine for Weave Appointment Reminders.
+FastAPI (+ Socket.IO / SSE) API server and Playwright automation engine for Weave appointment reminders. This repo is API-only; the frontend is deployed separately.
 
 ## Features
-- **REST API**: Workspace, Appointment, Patient, Automation run, and Message History endpoints.
-- **Real-Time SSE Events**: Live log streaming and state synchronization for frontend dashboards.
-- **Python Automation Engine**: Playwright browser automation driving Weave message composition and delivery.
-- **Deduplication & Header Verification**: Recipient validation and persistent logging to prevent misdirected messages.
-- **Chronological Execution**: Strict ascending time ordering (`8:15 AM` -> `4:15 PM`).
+- **REST API** (`/api/*`): CSV import, appointments, patients, automation runs, message history, settings.
+- **Real-time events**: Socket.IO and Server-Sent Events (`/api/automation/events`).
+- **Automation engine**: Playwright drives Weave message composition and delivery (`main.py`, run as a subprocess per run).
+- **Deduplication & header verification** to prevent misdirected messages.
 
 ## Tech Stack
-- **Node.js**: Express.js, Socket.io, Mongoose (optional MongoDB / In-Memory Adapter)
-- **Python**: Playwright, pytest, csv, logging
-- **Storage**: Persistent CSV logs (`logs/reminder_log.csv`) & MongoDB / Memory Store
+- Python 3.10+, FastAPI, Uvicorn, python-socketio, Motor (MongoDB), Playwright
 
-## Requirements
-- Node.js (v18+)
-- Python (v3.10+) with Playwright:
-  ```bash
-  pip install -r requirements.txt
-  playwright install chromium
-  ```
+## Setup
 
-## Setup & Quick Start
-
-### 1. Install Node Dependencies
 ```bash
-npm install
+python -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+python -m playwright install chromium
+cp .env.example .env              # then fill in MONGODB_URI, WEAVE_EMAIL, WEAVE_PASSWORD
 ```
 
-### 2. Configure Environment Variables
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-Ensure `WEAVE_EMAIL` and `WEAVE_PASSWORD` are populated.
+## Running
 
-### 3. Start Backend Server
-```bash
-npm start
-# Or for development with auto-reload:
-npm run dev
-```
-The server will run on `http://localhost:5000`.
+Always serve `app:sio_app` (the Socket.IO-wrapped app). `app:app` serves the REST API only.
 
-### 4. Run Python CLI Directly (Optional)
 ```bash
-# Dry Run (Compose & verify without sending)
-python main.py --dry-run --file data/appointments.csv
+# Development (auto-reload)
+uvicorn app:sio_app --reload --port 5000
 
-# Production Send Mode
-python main.py --send --file data/appointments.csv
+# Production
+uvicorn app:sio_app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
 ```
 
-### 5. Run Unit Tests
+Health check: `GET /api/health`. Interactive API docs: `/docs`.
+
+## Configuration
+See `.env.example`. Key variables:
+
+| Variable | Purpose |
+|---|---|
+| `MONGODB_URI` | MongoDB connection string |
+| `CORS_ORIGINS` | Comma-separated allowed origins (falls back to `FRONTEND_URL`, then `*`) |
+| `WEAVE_EMAIL` / `WEAVE_PASSWORD` | Weave account used by the automation |
+| `HEADLESS` | Run Chromium headless (`true` in production) |
+
+## Run the automation CLI directly (optional)
+```bash
+python main.py --dry-run --file data/appointments.csv   # compose & verify, no send
+python main.py --send --file data/appointments.csv      # send
+```
+
+## Tests
 ```bash
 python -m pytest tests/ -v
 ```

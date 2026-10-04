@@ -1,7 +1,6 @@
-# Node dependencies
-node_modules/
-
-# Python cache & build
+# Python cache, build & virtualenv
+venv/
+.venv/
 __pycache__/
 *.py[cod]
 *$py.class

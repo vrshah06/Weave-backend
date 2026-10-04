@@ -7,6 +7,9 @@ import math
 from database import get_db, is_db_connected
 from csv_utils import parse_appointment_csv
 from worker_bridge import automation_worker
+from src.logging_utils import setup_logger
+
+logger = setup_logger("weave_api")
 
 router = APIRouter()
 
@@ -227,9 +230,8 @@ async def start_automation(payload: dict, workspace_id: str = Depends(get_worksp
     except Exception as e:
         if "already in progress" in str(e) or "No selected appointments" in str(e):
             raise HTTPException(status_code=400, detail=str(e))
-        import traceback
-        tb = traceback.format_exc()
-        raise HTTPException(status_code=500, detail=f"{repr(e)} - {tb}")
+        logger.exception("Failed to start automation run for workspace %s", workspace_id)
+        raise HTTPException(status_code=500, detail="Failed to start automation run")
 
 @router.post("/automation/stop")
 async def stop_automation(workspace_id: str = Depends(get_workspace_id)):

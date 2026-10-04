@@ -1,9 +1,11 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-import socketio
 import os
 import sys
+from contextlib import asynccontextmanager
+
+import socketio
+from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 if sys.platform == 'win32':
     import asyncio
@@ -11,56 +13,45 @@ if sys.platform == 'win32':
 
 load_dotenv()
 
+from database import get_db, close_db
 from routers import router
-from database import get_db
+from config import CORS_ORIGINS
 from socket_manager import sio
+from src.logging_utils import setup_logger
 
-app = FastAPI(title="Weave Automation API")
+logger = setup_logger("weave_api")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    get_db()
+    logger.info("MongoDB connection initialized")
+    yield
+    close_db()
+    logger.info("MongoDB connection closed")
+
+
+app = FastAPI(title="Weave Automation API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    # Browsers reject credentialed requests to a wildcard origin
+    allow_credentials=CORS_ORIGINS != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(router, prefix="/api")
 
-# Wrap FastAPI with Socket.IO ASGI app
+# Wrap FastAPI with Socket.IO ASGI app. Serve `app:sio_app`, not `app:app`,
+# otherwise Socket.IO connections are not handled.
 sio_app = socketio.ASGIApp(socketio_server=sio, other_asgi_app=app)
-
-import os
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-
-frontend_dist_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
-if os.path.exists(frontend_dist_path):
-    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist_path, "assets")), name="assets")
-    
-    @app.get("/{full_path:path}")
-    async def serve_frontend(full_path: str):
-        if full_path.startswith("api/"):
-            return {"detail": "Not Found"}
-        
-        # Try to serve exact file first (e.g. vite.svg, favicon.ico)
-        file_path = os.path.join(frontend_dist_path, full_path)
-        if os.path.exists(file_path) and os.path.isfile(file_path):
-            return FileResponse(file_path)
-            
-        # Fallback to index.html for SPA routing
-        return FileResponse(os.path.join(frontend_dist_path, "index.html"))
-
-@app.on_event("startup")
-async def startup_db_client():
-    get_db()
-    print("MongoDB connection initialized")
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 5000))
     host = os.environ.get("HOST", "0.0.0.0")
-    print(f"==================================================")
-    print(f"WEAVE AUTOMATION BACKEND SERVER RUNNING ON {port}")
-    print(f"==================================================")
-    uvicorn.run("app:sio_app", host=host, port=port, reload=True)
+    reload = os.environ.get("RELOAD", "false").lower() in ("true", "1", "yes")
+    logger.info(f"Weave Automation API starting on {host}:{port}")
+    uvicorn.run("app:sio_app", host=host, port=port, reload=reload)
