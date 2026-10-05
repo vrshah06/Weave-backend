@@ -5,6 +5,7 @@ from typing import Callable, Optional
 from bson import ObjectId
 
 from automation.driver import DriverError, MessagingDriver, PrepareFailure, Recipient, SendStatus
+from controllers.presenters import screenshot_url
 from models.enums import AppointmentStatus, RunItemStatus, RunMode, RunStatus
 from repositories import appointment_repository, run_item_repository, run_repository, screenshot_repository
 from services import settings_service
@@ -53,6 +54,7 @@ class RunExecutor:
         try:
             return await self._execute()
         except DriverError as exc:
+            await self._save_run_failure_screenshot()
             return await self._finish(RunStatus.FAILED, f"Browser error: {exc}")
         except Exception as exc:
             logger.exception("Run %s crashed", self.run_id)
@@ -207,6 +209,18 @@ class RunExecutor:
             self.failure_screenshot = await self.driver.capture_screenshot()
         except Exception:
             logger.warning("Could not capture a screenshot for run %s", self.run_id, exc_info=True)
+
+    async def _save_run_failure_screenshot(self) -> None:
+        # Shows what Weave displayed when the run failed outside a patient (e.g. a login verification prompt).
+        await self._capture_failure()
+        if not self.failure_screenshot:
+            return
+        try:
+            screenshot_id = await screenshot_repository.save(self.run_id, None, "browser_error", self.failure_screenshot)
+        except Exception:
+            logger.warning("Could not save a screenshot for run %s", self.run_id, exc_info=True)
+            return
+        await self.log.error("browser.screenshot", f"Screenshot of the failure: {screenshot_url(str(self.run_id), screenshot_id)}")
 
     async def _save_screenshot(self, item_id: ObjectId, status: RunItemStatus, content: bytes) -> Optional[ObjectId]:
         try:

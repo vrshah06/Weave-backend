@@ -120,7 +120,8 @@ class WeaveDriver:
             await page.locator(sel.SIGNED_IN_MARKER).wait_for(state="visible", timeout=60000)
         except PlaywrightTimeoutError as exc:
             raise DriverError(
-                "Weave login did not complete (wrong credentials or a verification step). "
+                "Weave login did not complete (wrong credentials or a verification step; "
+                f"stuck at {page.url}, page title {await page.title()!r}). "
                 "Log in once with HEADLESS=false to refresh the saved session."
             ) from exc
         await page.goto(self.settings.weave_messages_url, wait_until="domcontentloaded")

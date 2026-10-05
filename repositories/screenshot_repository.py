@@ -13,9 +13,11 @@ def _bucket() -> AsyncGridFSBucket:
     return AsyncGridFSBucket(get_db(), bucket_name=BUCKET_NAME)
 
 
-async def save(run_id: ObjectId, item_id: ObjectId, step: str, content: bytes) -> ObjectId:
+async def save(run_id: ObjectId, item_id: Optional[ObjectId], step: str, content: bytes) -> ObjectId:
+    """item_id is None for run-level failures such as a failed Weave login."""
+    item_part = f"_item_{item_id}" if item_id else ""
     return await _bucket().upload_from_stream(
-        f"run_{run_id}_item_{item_id}_{step}.png",
+        f"run_{run_id}{item_part}_{step}.png",
         content,
         metadata={"run_id": run_id, "item_id": item_id, "content_type": "image/png"},
     )

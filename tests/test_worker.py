@@ -144,6 +144,9 @@ def test_login_failure_fails_the_run(client):
     work(client, driver)
     run = client.get(f"/api/v1/runs/{run_id}").json()
     assert run["status"] == "FAILED" and "Weave login failed" in run["error"] and driver.closed
+    log = next(log for log in client.get(f"/api/v1/runs/{run_id}/logs").json() if log["event"] == "browser.screenshot")
+    screenshot = client.get(log["message"].rsplit(" ", 1)[1])
+    assert screenshot.status_code == 200 and screenshot.content == FAKE_PNG
 
 
 def test_appointment_changed_mid_run_is_skipped(client):
