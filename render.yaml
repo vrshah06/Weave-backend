@@ -1,23 +1,49 @@
-services:
-  - type: web
-    name: weave-backend
-    env: python
-    buildCommand: pip install -r requirements.txt && python -m playwright install chromium
-    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
+envVarGroups:
+  - name: weave-shared
     envVars:
-      - key: NODE_ENV
+      - key: ENVIRONMENT
         value: production
-      - key: HEADLESS
-        value: "true"
-      - key: DEFAULT_TIMEOUT
-        value: "30000"
-      - key: SEARCH_TIMEOUT
-        value: "30000"
-      - key: MESSAGE_LOAD_TIMEOUT
-        value: "30000"
       - key: MONGODB_URI
         sync: false
+      - key: TIME_ZONE
+        value: America/New_York
+      - key: BUSINESS_NAME
+        value: MD Primary Care Inc.
+
+services:
+  - type: web
+    name: weave-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/v1/health
+    envVars:
+      - fromGroup: weave-shared
+      - key: API_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: worker
+    name: weave-worker
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python -m worker
+    disk:
+      name: weave-browser-profile
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - fromGroup: weave-shared
       - key: WEAVE_EMAIL
         sync: false
       - key: WEAVE_PASSWORD
         sync: false
+      - key: BROWSER_PROFILE_DIR
+        value: /data/weave-profile
+      - key: HEADLESS
+        value: "true"
+      # Keep false until a production DRY_RUN has been checked, then set to true to send real SMS.
+      - key: SENDING_ENABLED
+        value: "false"

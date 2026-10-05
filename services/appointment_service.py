@@ -1,45 +1,43 @@
-from datetime import datetime
+from datetime import date
 from typing import Optional
 
-from bson import ObjectId
-
-from repositories import appointment_repository, patient_repository
-from utils.formatters import mask_phone, parse_time_to_minutes
-
-
-async def get_appointments_for_date(date: Optional[str]) -> dict:
-    target_date = date
-    if not target_date:
-        latest = await appointment_repository.find_latest()
-        target_date = latest["appointmentDate"] if latest else datetime.now().strftime("%Y-%m-%d")
-
-    appts = await appointment_repository.list_by_date(target_date)
-
-    formatted = []
-    for a in appts:
-        patient = await patient_repository.find_by_id(a.get("patientId"))
-        formatted.append({
-            "id": str(a["_id"]),
-            "patientName": patient["fullName"] if patient else "Unknown",
-            "phone": patient["phone"] if patient else "",
-            "maskedPhone": mask_phone(patient["phone"] if patient else ""),
-            "appointmentDate": a["appointmentDate"],
-            "appointmentTime": a["appointmentTime"],
-            "provider": a.get("provider", "General Practice"),
-            "reminderSelected": a.get("reminderSelected", True),
-            "reminderStatus": a.get("reminderStatus", "PENDING")
-        })
-
-    formatted.sort(key=lambda x: parse_time_to_minutes(x["appointmentTime"]))
-    return {"date": target_date, "appointments": formatted}
+from core.errors import NotFoundError
+from models.enums import REQUEUEABLE_APPOINTMENT_STATUSES, AppointmentStatus
+from repositories import appointment_repository
+from utils.clock import utc_now
+from utils.object_ids import parse_body_ids, parse_path_id
 
 
-async def set_reminder_selection(appointment_ids: list, selected: bool) -> None:
-    ids = [ObjectId(aid) for aid in appointment_ids]
-    await appointment_repository.update_many(ids, {"reminderSelected": bool(selected), "updatedAt": datetime.utcnow()})
+async def list_for_date(appointment_date: date, status: Optional[AppointmentStatus]) -> list[dict]:
+    return await appointment_repository.list_by_date_with_patient(appointment_date, status)
 
 
-async def get_available_dates() -> list:
-    dates = await appointment_repository.distinct_dates()
-    dates.sort(reverse=True)
-    return dates
+async def list_dates() -> list[str]:
+    return await appointment_repository.list_dates()
+
+
+async def get(appointment_id: str) -> dict:
+    appointment = await appointment_repository.find_by_id_with_patient(parse_path_id(appointment_id, "Appointment"))
+    if not appointment:
+        raise NotFoundError("Appointment not found")
+    return appointment
+
+
+async def set_excluded(appointment_ids: list[str], excluded: bool) -> tuple[int, int]:
+    return await appointment_repository.set_excluded(parse_body_ids(appointment_ids, "appointmentIds"), excluded)
+
+
+async def requeue(appointment_ids: list[str]) -> tuple[int, int]:
+    return await appointment_repository.transition_many(
+        parse_body_ids(appointment_ids, "appointmentIds"),
+        REQUEUEABLE_APPOINTMENT_STATUSES,
+        {"status": AppointmentStatus.PENDING.value, "status_reason": "Re-queued manually"},
+    )
+
+
+async def mark_sent(appointment_ids: list[str]) -> tuple[int, int]:
+    return await appointment_repository.transition_many(
+        parse_body_ids(appointment_ids, "appointmentIds"),
+        (AppointmentStatus.NEEDS_REVIEW,),
+        {"status": AppointmentStatus.SENT.value, "status_reason": "Marked as sent after manual review", "sent_at": utc_now()},
+    )

@@ -1,40 +1,12 @@
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-LOG_DIR = BASE_DIR / "logs"
-SCREENSHOT_DIR = LOG_DIR / "screenshots"
-PROFILE_DIR = BASE_DIR / "weave-profile"
-
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-CORS_ORIGINS = [
-    o.strip() for o in os.getenv("CORS_ORIGINS", os.getenv("FRONTEND_URL", "*")).split(",") if o.strip()
-]
-
-MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/weave_automation")
-
-WEAVE_EMAIL = os.getenv("WEAVE_EMAIL", "")
-WEAVE_PASSWORD = os.getenv("WEAVE_PASSWORD", "")
-
-WEAVE_APP_URL = os.getenv("WEAVE_APP_URL", "https://app.getweave.com")
-WEAVE_MESSAGES_URL = os.getenv("WEAVE_MESSAGES_URL", "https://app.getweave.com/messages/inbox")
-
-headless_env = os.getenv("HEADLESS", "True" if os.name != "nt" or os.getenv("NODE_ENV") == "production" else "False").lower()
-HEADLESS = headless_env in ("true", "1", "t", "yes")
-SLOW_MO = int(os.getenv("SLOW_MO", "100"))
-DEFAULT_TIMEOUT = int(os.getenv("DEFAULT_TIMEOUT", "15000"))
-SEARCH_TIMEOUT = int(os.getenv("SEARCH_TIMEOUT", "20000"))
-MESSAGE_LOAD_TIMEOUT = int(os.getenv("MESSAGE_LOAD_TIMEOUT", "30000"))
-SCREENSHOT_ON_ERROR = os.getenv("SCREENSHOT_ON_ERROR", "True").lower() in ("true", "1", "t")
-
-BUSINESS_NAME = os.getenv("BUSINESS_NAME", "MD Primary Care Inc.")
 
 DEFAULT_MESSAGE_TEMPLATE = (
     "This is a friendly reminder that you have an appointment scheduled on {appointment_date} "
@@ -44,5 +16,51 @@ DEFAULT_MESSAGE_TEMPLATE = (
     "Reply STOP to unsubscribe."
 )
 
-REMINDER_LOG_PATH = LOG_DIR / "reminder_log.csv"
-APPLICATION_LOG_PATH = LOG_DIR / "application.log"
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    return int(value) if value else default
+
+
+def _env_list(name: str, default: str) -> list[str]:
+    return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    environment: str = field(default_factory=lambda: os.getenv("ENVIRONMENT", "development"))
+    log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+
+    mongodb_uri: str = field(default_factory=lambda: os.getenv("MONGODB_URI", "mongodb://localhost:27017/weave_automation"))
+    api_key: str = field(default_factory=lambda: os.getenv("API_KEY", ""))
+    cors_origins: list[str] = field(default_factory=lambda: _env_list("CORS_ORIGINS", os.getenv("FRONTEND_URL", "*")))
+
+    default_business_name: str = field(default_factory=lambda: os.getenv("BUSINESS_NAME", "MD Primary Care Inc."))
+    default_time_zone: str = field(default_factory=lambda: os.getenv("TIME_ZONE", "America/New_York"))
+
+    weave_email: str = field(default_factory=lambda: os.getenv("WEAVE_EMAIL", ""))
+    weave_password: str = field(default_factory=lambda: os.getenv("WEAVE_PASSWORD", ""))
+    weave_app_url: str = field(default_factory=lambda: os.getenv("WEAVE_APP_URL", "https://app.getweave.com"))
+    weave_messages_url: str = field(default_factory=lambda: os.getenv("WEAVE_MESSAGES_URL", "https://app.getweave.com/messages/inbox"))
+
+    browser_headless: bool = field(default_factory=lambda: _env_bool("HEADLESS", True))
+    browser_slow_mo_ms: int = field(default_factory=lambda: _env_int("SLOW_MO_MS", 0))
+    browser_timeout_ms: int = field(default_factory=lambda: _env_int("BROWSER_TIMEOUT_MS", 20000))
+    browser_profile_dir: Path = field(default_factory=lambda: Path(os.getenv("BROWSER_PROFILE_DIR", str(BASE_DIR / "weave-profile"))))
+
+    # Real SMS are only sent when this is explicitly enabled on the worker.
+    sending_enabled: bool = field(default_factory=lambda: _env_bool("SENDING_ENABLED", False))
+    worker_poll_interval_seconds: int = field(default_factory=lambda: _env_int("WORKER_POLL_INTERVAL_SECONDS", 3))
+    worker_heartbeat_interval_seconds: int = field(default_factory=lambda: _env_int("WORKER_HEARTBEAT_INTERVAL_SECONDS", 10))
+    worker_lock_ttl_seconds: int = field(default_factory=lambda: _env_int("WORKER_LOCK_TTL_SECONDS", 60))
+    worker_max_consecutive_errors: int = field(default_factory=lambda: _env_int("WORKER_MAX_CONSECUTIVE_ERRORS", 3))
+
+
+config = AppConfig()

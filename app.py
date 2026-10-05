@@ -1,65 +1,43 @@
+import logging
 import os
-import uvicorn
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+import uvicorn
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
-from automation.logging_utils import setup_logger
-from core.config import CORS_ORIGINS
-from core.database import close_db, get_db
-from core.exceptions import (
-    AutomationAlreadyRunningError,
-    InvalidRequestError,
-    NoActiveRunError,
-    NoAppointmentsSelectedError,
-    NotFoundError,
-)
+from core import database
+from core.config import config
+from core.errors import register_error_handlers
+from core.logging import configure_logging
 from routes import api_router
 
-logger = setup_logger("weave_api")
+configure_logging(config.log_level)
+logger = logging.getLogger("weave.api")
 
-ERROR_STATUS_CODES = {
-    AutomationAlreadyRunningError: 400,
-    NoAppointmentsSelectedError: 400,
-    NoActiveRunError: 400,
-    NotFoundError: 404,
-    InvalidRequestError: 400,
-}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    get_db()
-    logger.info("MongoDB connection initialized")
+    if not config.api_key:
+        raise RuntimeError("API_KEY is not set; refusing to start an unauthenticated API")
+    database.connect()
+    await database.ensure_indexes()
+    logger.info("API started (environment=%s)", config.environment)
     yield
-    close_db()
-    logger.info("MongoDB connection closed")
+    await database.close()
 
 
-app = FastAPI(title="Weave Automation API", lifespan=lifespan)
-
+app = FastAPI(title="Weave Reminder API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=CORS_ORIGINS != ["*"],
+    allow_origins=config.cors_origins,
+    # Browsers reject credentialed requests to a wildcard origin
+    allow_credentials=config.cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-async def handle_domain_error(request: Request, exc: Exception):
-    return JSONResponse(status_code=ERROR_STATUS_CODES[type(exc)], content={"detail": str(exc)})
-
-
-for error_type in ERROR_STATUS_CODES:
-    app.add_exception_handler(error_type, handle_domain_error)
-
-app.include_router(api_router, prefix="/api")
+register_error_handlers(app)
+app.include_router(api_router)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    host = os.environ.get("HOST", "0.0.0.0")
-    reload = os.environ.get("RELOAD", "false").lower() in ("true", "1", "yes")
-    logger.info(f"Weave Automation API starting on {host}:{port}")
-    uvicorn.run("app:app", host=host, port=port, reload=reload)
+    uvicorn.run("app:app", host=os.getenv("HOST", "0.0.0.0"), port=int(os.getenv("PORT", "8000")))

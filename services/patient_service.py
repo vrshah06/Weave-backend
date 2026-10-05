@@ -1,30 +1,21 @@
-from repositories import appointment_repository, message_attempt_repository, patient_repository
+from typing import Optional
+
+from core.errors import NotFoundError
+from repositories import appointment_repository, patient_repository
+from utils.object_ids import parse_path_id
 
 
-async def list_patients() -> list:
-    patients = await patient_repository.list_all()
-    for p in patients: p["_id"] = str(p["_id"])
-    return patients
+async def list_page(search: Optional[str], limit: int, offset: int) -> tuple[list[dict], int]:
+    return await patient_repository.list_page(search, limit, offset)
 
 
-async def get_message_history(patient_id: str) -> list:
-    history = await message_attempt_repository.list_by_patient(patient_id)
-    for h in history:
-        h["_id"] = str(h["_id"])
-        if h.get("patientId"):
-            h["patientId"] = str(h["patientId"])
-        if h.get("automationRunId"):
-            h["automationRunId"] = str(h["automationRunId"])
+async def get(patient_id: str) -> dict:
+    patient = await patient_repository.find_by_id(parse_path_id(patient_id, "Patient"))
+    if not patient:
+        raise NotFoundError("Patient not found")
+    return patient
 
-        if h.get("appointmentId"):
-            appt = await appointment_repository.find_by_id(h["appointmentId"])
-            if appt:
-                h["appointmentId"] = {
-                    "_id": str(appt["_id"]),
-                    "appointmentDate": appt.get("appointmentDate"),
-                    "appointmentTime": appt.get("appointmentTime"),
-                    "provider": appt.get("provider")
-                }
-            else:
-                h["appointmentId"] = str(h["appointmentId"])
-    return history
+
+async def list_appointments(patient_id: str) -> list[dict]:
+    patient = await get(patient_id)
+    return await appointment_repository.list_for_patient(patient["_id"])

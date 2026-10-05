@@ -1,35 +1,40 @@
-import re
-from datetime import datetime
+from datetime import date
 from typing import Optional
 
-from core.exceptions import InvalidRequestError
+from controllers.presenters import present_appointment
+from models.appointment_models import (
+    AppointmentBulkUpdateResponse,
+    AppointmentDatesResponse,
+    AppointmentListResponse,
+    AppointmentResponse,
+)
+from models.enums import AppointmentStatus
 from services import appointment_service
 
-ISO_DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+async def list_appointments(appointment_date: date, status: Optional[AppointmentStatus]) -> AppointmentListResponse:
+    appointments = await appointment_service.list_for_date(appointment_date, status)
+    return AppointmentListResponse(appointment_date=appointment_date, appointments=[present_appointment(a) for a in appointments])
 
 
-def _validate_iso_date(value: str) -> str:
-    try:
-        if not ISO_DATE_PATTERN.fullmatch(value):
-            raise ValueError
-        datetime.strptime(value, "%Y-%m-%d")
-    except ValueError:
-        raise InvalidRequestError(f"Invalid date '{value}'. Use YYYY-MM-DD, e.g. 2026-10-02.")
-    return value
+async def list_dates() -> AppointmentDatesResponse:
+    return AppointmentDatesResponse(dates=[date.fromisoformat(d) for d in await appointment_service.list_dates()])
 
 
-async def get_appointments(date: Optional[str]) -> dict:
-    if date is not None:
-        date = _validate_iso_date(date)
-    return await appointment_service.get_appointments_for_date(date)
+async def get_appointment(appointment_id: str) -> AppointmentResponse:
+    return present_appointment(await appointment_service.get(appointment_id))
 
 
-async def update_selection(payload: dict) -> dict:
-    appointment_ids = payload.get("appointmentIds", [])
-    selected = payload.get("selected", False)
-    await appointment_service.set_reminder_selection(appointment_ids, selected)
-    return {"message": "Appointment selection updated", "count": len(appointment_ids), "selected": selected}
+async def set_excluded(appointment_ids: list[str], excluded: bool) -> AppointmentBulkUpdateResponse:
+    matched, updated = await appointment_service.set_excluded(appointment_ids, excluded)
+    return AppointmentBulkUpdateResponse(matched=matched, updated=updated)
 
 
-async def get_available_dates() -> dict:
-    return {"dates": await appointment_service.get_available_dates()}
+async def requeue(appointment_ids: list[str]) -> AppointmentBulkUpdateResponse:
+    matched, updated = await appointment_service.requeue(appointment_ids)
+    return AppointmentBulkUpdateResponse(matched=matched, updated=updated)
+
+
+async def mark_sent(appointment_ids: list[str]) -> AppointmentBulkUpdateResponse:
+    matched, updated = await appointment_service.mark_sent(appointment_ids)
+    return AppointmentBulkUpdateResponse(matched=matched, updated=updated)
