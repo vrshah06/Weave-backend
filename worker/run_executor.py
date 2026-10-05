@@ -64,9 +64,6 @@ class RunExecutor:
                 logger.exception("Could not close the browser for run %s", self.run_id)
 
     async def _execute(self) -> RunStatus:
-        if self.mode is RunMode.SEND and not self.sending_enabled:
-            return await self._finish(RunStatus.FAILED, "Sending is disabled on this worker; set SENDING_ENABLED=true to send real messages")
-
         settings = await settings_service.get_settings()
         appointments = await appointment_repository.list_runnable_with_patient(self.appointment_date)
         await run_repository.set_total(self.run_id, len(appointments))
