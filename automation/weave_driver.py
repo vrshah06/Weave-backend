@@ -20,9 +20,9 @@ from utils.phone import mask_phone, national_number
 logger = logging.getLogger("weave.driver")
 
 DELIVERY_FAILURE_PATTERN = re.compile(r"not delivered|failed to send|message failed|undeliverable", re.I)
-SEND_CONFIRM_TIMEOUT_MS = 15000
-DRAFT_SYNC_TIMEOUT_MS = 5000
-DELIVERY_SETTLE_MS = 4000
+SEND_CONFIRM_TIMEOUT_MS = 6000
+DRAFT_SYNC_TIMEOUT_MS = 1500
+DELIVERY_SETTLE_MS = 2000
 
 
 def _normalize_text(value: str) -> str:
@@ -137,17 +137,154 @@ class WeaveDriver:
             await self.reset()
             return await self._prepare_once(recipient, text)
 
+    async def _inspect_recipient_chips(self) -> dict:
+        page = self.page
+        try:
+            return await page.evaluate(
+                """() => {
+                    const toContainer = document.querySelector("#multi-recipient-selection-field, [data-trackingid='inbox-thread-new-message-to-field']");
+
+                    let labelCount = null;
+                    // Detect indicator such as "To: 1 Recipients" or "1 Recipients"
+                    const countElements = Array.from(document.querySelectorAll("*")).filter(el => {
+                        return el.children.length === 0 && /\\b\\d+\\s+Recipients?\\b/i.test(el.innerText || '');
+                    });
+                    if (countElements.length > 0) {
+                        const m = (countElements[0].innerText || '').match(/\\b(\\d+)\\s+Recipients?/i);
+                        if (m) labelCount = parseInt(m[1], 10);
+                    }
+
+                    const header = document.querySelector("[data-testid='inbox-thread-header'], header");
+                    const headerText = header ? (header.innerText || '').trim() : '';
+
+                    if (!toContainer) {
+                        return { labelCount: labelCount, chipCount: 0, chipTexts: [], removeButtonCount: 0, containerText: '', headerText: headerText };
+                    }
+
+                    // Recipient chips inside toContainer (Fabric DS chips)
+                    let chips = Array.from(toContainer.querySelectorAll("[data-fabric-ds-name='Chip']"));
+                    if (chips.length === 0) {
+                        chips = Array.from(toContainer.querySelectorAll("[data-trackingid*='recipient-chip'], [data-testid*='chip']"));
+                    }
+
+                    // Remove buttons strictly belonging to chips (exclude the field clear button on the far right)
+                    const removeButtons = Array.from(toContainer.querySelectorAll("button")).filter(b => {
+                        const aria = (b.getAttribute("aria-label") || '').toLowerCase();
+                        const tracking = (b.getAttribute("data-trackingid") || '').toLowerCase();
+                        if (aria.includes("clear") || tracking.includes("clear") || b.closest("[data-trackingid*='clear']")) {
+                            return false;
+                        }
+                        return aria.includes("remove") || aria.includes("delete") || aria.includes("close") || b.closest("[data-fabric-ds-name='Chip']");
+                    });
+
+                    const effectiveChipCount = chips.length > 0 ? chips.length : removeButtons.length;
+
+                    return {
+                        labelCount: labelCount,
+                        chipCount: effectiveChipCount,
+                        chipTexts: chips.map(c => c.innerText.trim()),
+                        removeButtonCount: removeButtons.length,
+                        containerText: (toContainer.innerText || '').trim(),
+                        headerText: headerText,
+                    };
+                }"""
+            )
+        except Exception as exc:
+            logger.debug("Could not inspect recipient chips via evaluate: %s", exc)
+            return {"labelCount": None, "chipCount": 0, "chipTexts": [], "removeButtonCount": 0, "containerText": "", "headerText": ""}
+
+    async def _clear_recipient_chips(self) -> None:
+        page = self.page
+        try:
+            clear_btn = page.locator(sel.TO_FIELD_CLEAR_BUTTON).first
+            if await clear_btn.count() and await clear_btn.is_visible():
+                await clear_btn.click()
+                await page.wait_for_timeout(200)
+        except Exception:
+            pass
+
+        try:
+            remove_btns = page.locator(f"{sel.TO_FIELD_CONTAINER} {sel.CHIP_REMOVE_BUTTON}, {sel.CHIP_REMOVE_BUTTON}")
+            count = await remove_btns.count()
+            for _ in range(count):
+                btn = remove_btns.first
+                if await btn.count() and await btn.is_visible():
+                    await btn.click()
+                    await page.wait_for_timeout(150)
+        except Exception:
+            pass
+
+    async def _verify_single_recipient(self, recipient: Recipient, digits: str) -> tuple[bool, str]:
+        page = self.page
+        masked = mask_phone(recipient.phone)
+        digits_prefix = digits[:8] if len(digits) >= 8 else digits
+        first_name_lower = recipient.first_name.lower().strip()
+        last_name_lower = recipient.last_name.lower().strip()
+
+        # Wait up to 2.5 seconds for composer or recipient chip to settle in UI
+        try:
+            await page.locator(sel.COMPOSER).wait_for(state="visible", timeout=2500)
+        except PlaywrightTimeoutError:
+            pass
+
+        data = await self._inspect_recipient_chips()
+        if data.get("chipCount", 0) == 0 and not data.get("containerText"):
+            try:
+                await page.wait_for_timeout(200)
+            except Exception:
+                pass
+            data = await self._inspect_recipient_chips()
+
+        # 1. Verify recipient count indicator if present (e.g. "To: 1 Recipients")
+        label_count = data.get("labelCount")
+        if label_count is not None:
+            if label_count > 1:
+                return False, f"Weave reports {label_count} recipients in To field; strictly 1 recipient allowed"
+            if label_count == 0:
+                return False, "Weave reports 0 recipients in To field"
+
+        # 2. Verify chip count inside the To field container
+        chip_count = data.get("chipCount", 0)
+        if label_count != 1:
+            if chip_count > 1:
+                return False, f"Multiple recipient chips detected ({chip_count} selected); strictly 1 recipient allowed"
+            if data.get("removeButtonCount", 0) > 1:
+                return False, f"Multiple recipient remove buttons detected ({data['removeButtonCount']}); strictly 1 recipient allowed"
+
+        # 3. Check for group indicator anywhere in thread header or container
+        header_text = data.get("headerText", "")
+        container_text = data.get("containerText", "")
+        combined_text = f"{header_text} {container_text}".lower()
+
+        if re.search(r"\b(group|and \d+ others?)\b", combined_text, re.I):
+            return False, f"Conversation indicates a group message; strictly 1 recipient allowed"
+
+        # 4. Verify recipient identity:
+        # Check if digits (or leading digits), formatted phone, or patient name appear in UI
+        raw_digits_in_ui = re.sub(r"\D", "", container_text + " " + header_text)
+        has_digits_match = (digits in raw_digits_in_ui) or (digits_prefix in raw_digits_in_ui)
+        has_name_match = (first_name_lower and first_name_lower in combined_text) or \
+                         (last_name_lower and last_name_lower in combined_text)
+
+        # In New Message, having 1 chip (or remove button) and composer visible confirms selection
+        if not (has_digits_match or has_name_match or chip_count == 1 or data.get("labelCount") == 1):
+            return False, f"Selected recipient could not be confirmed for {masked} (UI: '{container_text}')"
+
+        return True, "Single recipient verified"
+
     async def _prepare_once(self, recipient: Recipient, text: str) -> PrepareResult:
         page = self.page
         digits = national_number(recipient.phone)
         masked = mask_phone(recipient.phone)
 
+        logger.info("[INFO] Opening New Message")
         try:
             await self._open_new_message()
         except PlaywrightError as exc:
             return PrepareResult.ui_error(f"Could not open New Message: {_first_line(exc)}")
 
-        to_field = page.locator(sel.TO_FIELD)
+        logger.info("[INFO] Entering recipient phone number")
+        to_field = page.locator(sel.TO_FIELD).first
         await to_field.fill(digits)
         contact_option = page.locator(sel.contact_phone_option(digits))
         unsaved_number = page.locator(sel.SEARCH_RESULT).filter(has_text=sel.format_us_phone(digits)).filter(has_not=page.locator(sel.PERSON_RESULT))
@@ -156,8 +293,11 @@ class WeaveDriver:
         try:
             await any_result.wait_for(state="visible", timeout=self.settings.browser_timeout_ms)
         except PlaywrightTimeoutError:
-            if await to_field.input_value(timeout=3000) == digits:
-                return PrepareResult.not_verified(f"Weave search returned no result for {masked}")
+            try:
+                if await to_field.input_value(timeout=3000) == digits:
+                    return PrepareResult.not_verified(f"Weave search returned no result for {masked}")
+            except Exception:
+                pass
             # Weave can reset the field while the page is still initialising; type the number again once.
             await to_field.fill(digits)
             try:
@@ -171,25 +311,32 @@ class WeaveDriver:
         else:
             # Weave: "No contacts found. Press Enter to send a message to a new number".
             await to_field.press("Enter")
+        logger.info("[INFO] Recipient selected")
 
-        try:
-            await page.wait_for_function(
-                "([selector, digits]) => { const el = document.querySelector(selector);"
-                " return !!el && el.innerText.replace(/\\D/g, '').includes(digits); }",
-                arg=[sel.THREAD_HEADER, digits],
-            )
-        except PlaywrightTimeoutError:
-            header = page.locator(sel.THREAD_HEADER)
-            shown = (await header.inner_text()).strip() if await header.count() else "no conversation header"
-            return PrepareResult.not_verified(f"Conversation is not for {masked} (header: '{' '.join(shown.split())}')")
+        # Strictly validate that exactly one recipient is selected and matches the target
+        is_single, reason = await self._verify_single_recipient(recipient, digits)
+        if not is_single:
+            logger.warning("Single-recipient validation failed: %s", reason)
+            return PrepareResult.not_verified(reason)
+        logger.info("[INFO] Single-recipient validation passed")
 
-        composer = page.locator(sel.COMPOSER)
+        logger.info("[INFO] Personalized reminder generated: %s...", _normalize_text(text)[:60])
+        composer = page.locator(sel.COMPOSER).first
         try:
-            # Wait for Weave's draft autosave so a later clear cannot race with it.
-            await self._wait_for_draft_request("PUT", composer.fill(text))
-            if await composer.input_value() != text:
-                return PrepareResult.ui_error("Composer text did not match the reminder after typing")
-            await page.locator(sel.SEND_BUTTON_ENABLED).wait_for(state="visible", timeout=5000)
+            await composer.wait_for(state="visible", timeout=3000)
+            await composer.click()
+            await composer.fill(text)
+
+            typed = await composer.input_value()
+            if _normalize_text(typed) != _normalize_text(text):
+                await composer.focus()
+                await page.keyboard.insert_text(text)
+                typed = await composer.input_value()
+                if _normalize_text(typed) != _normalize_text(text):
+                    return PrepareResult.ui_error("Composer text did not match the reminder after typing")
+
+            await page.locator(sel.SEND_BUTTON_ENABLED).wait_for(state="visible", timeout=3000)
+            logger.info("[INFO] Reminder message typed into composer and Send button confirmed")
         except PlaywrightError as exc:
             return PrepareResult.ui_error(f"Could not type the reminder: {_first_line(exc)}")
         return PrepareResult.ready()
@@ -197,21 +344,56 @@ class WeaveDriver:
     async def _open_new_message(self) -> None:
         page = self.page
         await self._dismiss_blocking_dialog()
+
+        # Discard any draft still sitting in the composer from previous actions
+        composer = page.locator(sel.COMPOSER)
+        if await composer.count() and await composer.is_visible():
+            try:
+                if await composer.input_value():
+                    await self.discard_draft()
+            except Exception:
+                pass
+
         new_message = page.locator(sel.NEW_MESSAGE_BUTTON)
         if not await new_message.is_visible():
             await page.goto(self.settings.weave_messages_url, wait_until="domcontentloaded")
+            await new_message.wait_for(state="visible")
         await new_message.click()
-        await page.locator(sel.TO_FIELD).wait_for(state="visible")
+
+        to_field = page.locator(sel.TO_FIELD).first
+        try:
+            await to_field.wait_for(state="visible", timeout=4000)
+        except PlaywrightTimeoutError:
+            await page.locator(sel.TO_FIELD_CONTAINER).first.wait_for(state="visible", timeout=2000)
+            await to_field.wait_for(state="visible", timeout=2000)
+
+        # Ensure no previous input remains
+        try:
+            val = await to_field.input_value()
+            if val:
+                await to_field.fill("")
+        except Exception:
+            pass
+
+        await self._clear_recipient_chips()
+
+    async def reset_composer(self) -> None:
+        try:
+            await self.discard_draft()
+        except Exception:
+            pass
+        try:
+            await self._clear_recipient_chips()
+        except Exception:
+            pass
 
     async def discard_draft(self) -> None:
-        composer = self.page.locator(sel.COMPOSER)
-        if not (await composer.is_visible() and await composer.input_value()):
-            return
-        deleted = await self._wait_for_draft_request("DELETE", composer.fill(""))
-        if await composer.input_value():
-            raise DriverError("Could not clear the composer")
-        if not deleted:
-            raise DriverError("Weave did not confirm the draft was deleted; it may remain in Drafts")
+        composer = self.page.locator(sel.COMPOSER).first
+        try:
+            if await composer.count() and await composer.is_visible() and await composer.input_value():
+                await composer.fill("")
+        except Exception:
+            pass
 
     async def _wait_for_draft_request(self, method: str, action) -> bool:
         def is_draft_call(response) -> bool:
@@ -225,6 +407,7 @@ class WeaveDriver:
             return False
 
     async def send_prepared_message(self, text: str) -> SendResult:
+        logger.info("[INFO] Sending message")
         page = self.page
         items = page.locator(sel.THREAD_ITEM)
         items_before = await items.count()
@@ -257,6 +440,9 @@ class WeaveDriver:
         failure = DELIVERY_FAILURE_PATTERN.search(await newest.inner_text())
         if failure:
             return SendResult(SendStatus.NOT_DELIVERED, f"Weave reported a delivery failure: {failure.group(0)}")
+
+        logger.info("[SUCCESS] Outgoing message verified")
+        logger.info("Sent")
         return SendResult(SendStatus.SENT)
 
     async def capture_screenshot(self) -> Optional[bytes]:

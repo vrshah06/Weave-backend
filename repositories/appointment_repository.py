@@ -150,6 +150,6 @@ async def release_stuck_sending(reason: str) -> list[ObjectId]:
     if ids:
         await get_db().appointments.update_many(
             {"_id": {"$in": ids}},
-            {"$set": {"status": AppointmentStatus.NEEDS_REVIEW.value, "status_reason": reason, "updated_at": utc_now()}},
+            {"$set": {"status": AppointmentStatus.FAILED.value, "status_reason": reason, "updated_at": utc_now()}},
         )
     return ids

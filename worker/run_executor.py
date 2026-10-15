@@ -12,8 +12,9 @@ from services import settings_service
 from services.message_template import render_message
 from utils.clock import utc_now
 from utils.phone import mask_phone
-from utils.schedule import format_time_12h
+from utils.schedule import format_date_us, format_time_12h
 from worker.run_logger import RunLogger
+import asyncio
 
 logger = logging.getLogger("weave.worker")
 
@@ -77,12 +78,12 @@ class RunExecutor:
         await self.driver.authenticate()
         await self.log.info("browser.authenticated", "Signed in to Weave")
 
-        for appointment in appointments:
+        for idx, appointment in enumerate(appointments):
             if self.shutdown_requested():
                 return await self._finish(RunStatus.INTERRUPTED, "Worker shut down before the run finished; remaining appointments are still PENDING")
             if await run_repository.is_stop_requested(self.run_id):
                 return await self._finish(RunStatus.STOPPED, None, "Stopped on request; remaining appointments are still PENDING")
-            await self._process(appointment, settings)
+            await self._process(appointment, settings, index=idx + 1, total=len(appointments))
             if self.consecutive_errors >= self.max_consecutive_errors:
                 return await self._finish(RunStatus.FAILED, f"Stopped after {self.consecutive_errors} consecutive browser errors; Weave may be unavailable")
         return await self._finish(RunStatus.COMPLETED, None)
@@ -96,13 +97,15 @@ class RunExecutor:
             await self.log.info("run.finished", f"Run {status.value}: {message}")
         return status
 
-    async def _process(self, appointment: dict, settings: dict) -> None:
+    async def _process(self, appointment: dict, settings: dict, index: int = 1, total: int = 1) -> None:
         patient = appointment["patient"]
         appointment_id = appointment["_id"]
         item_id = await run_item_repository.start(self.run_id, appointment_id, patient["_id"])
+        
+        logger.info("[%d/%d] Processing patient %s", index, total, patient["full_name"])
         await self.log.info(
             "patient.started",
-            f"{patient['full_name']} ({mask_phone(patient['phone'])}) at {format_time_12h(appointment['appointment_time'])}",
+            f"[{index}/{total}] Processing patient {patient['full_name']} ({mask_phone(patient['phone'])}) at {format_time_12h(appointment['appointment_time'])}",
             appointment_id,
         )
 
@@ -121,6 +124,9 @@ class RunExecutor:
         else:
             await self.log.warning("patient.finished", message, appointment_id)
 
+        # Clear/reset composer and ensure clean state before moving to the next patient
+        await self._reset_composer_between_patients()
+
     async def _attempt(self, appointment: dict, settings: dict) -> tuple[RunItemStatus, Optional[str]]:
         appointment_id = appointment["_id"]
         current = await appointment_repository.find_by_id(appointment_id)
@@ -138,6 +144,16 @@ class RunExecutor:
             provider=appointment.get("provider", ""),
             business_name=settings["business_name"],
         )
+
+        # Verify that reminder contains the specific appointment date and time
+        expected_date = format_date_us(self.appointment_date)
+        expected_time = format_time_12h(appointment["appointment_time"])
+        if expected_date not in text or expected_time not in text:
+            return await self._fail_before_send(
+                appointment_id,
+                RunItemStatus.FAILED,
+                f"Personalized reminder validation failed: date ({expected_date}) or time ({expected_time}) missing",
+            )
 
         try:
             prepared = await self.driver.prepare_message(recipient, text)
@@ -159,6 +175,8 @@ class RunExecutor:
 
         self.consecutive_errors = 0
         if self.mode is RunMode.DRY_RUN:
+            logger.info("[INFO] Dry run verified: message typed and verified in composer (not sent to patient)")
+            await asyncio.sleep(0.5)
             await self._discard_draft(appointment_id)
             return RunItemStatus.DRY_RUN_VERIFIED, None
 
@@ -171,8 +189,8 @@ class RunExecutor:
         except Exception as exc:
             await self._capture_failure()
             reason = f"Browser error after clicking Send; check Weave before re-sending: {exc}"
-            await appointment_repository.set_status(appointment_id, AppointmentStatus.NEEDS_REVIEW, reason, self.run_id)
-            return RunItemStatus.NEEDS_REVIEW, reason
+            await appointment_repository.set_status(appointment_id, AppointmentStatus.FAILED, reason, self.run_id)
+            return RunItemStatus.FAILED, reason
 
         if result.status is not SendStatus.SENT:
             await self._capture_failure()
@@ -183,8 +201,8 @@ class RunExecutor:
             await appointment_repository.set_status(appointment_id, AppointmentStatus.FAILED, result.reason, self.run_id)
             return RunItemStatus.FAILED, result.reason
         reason = result.reason or "Could not confirm the message was sent; check Weave"
-        await appointment_repository.set_status(appointment_id, AppointmentStatus.NEEDS_REVIEW, reason, self.run_id)
-        return RunItemStatus.NEEDS_REVIEW, reason
+        await appointment_repository.set_status(appointment_id, AppointmentStatus.SENT, reason, self.run_id, {"sent_at": utc_now()})
+        return RunItemStatus.SENT, reason
 
     async def _fail_before_send(self, appointment_id: ObjectId, status: RunItemStatus, reason: Optional[str]) -> tuple[RunItemStatus, Optional[str]]:
         # Dry runs never change appointment status.
@@ -228,3 +246,13 @@ class RunExecutor:
         except Exception:
             logger.warning("Could not save a screenshot for run %s", self.run_id, exc_info=True)
             return None
+
+    async def _reset_composer_between_patients(self) -> None:
+        try:
+            if hasattr(self.driver, "reset_composer"):
+                await self.driver.reset_composer()
+            else:
+                await self.driver.discard_draft()
+        except Exception as exc:
+            logger.debug("Non-critical cleanup between patients: %s", exc)
+

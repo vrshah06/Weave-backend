@@ -29,5 +29,7 @@ def format_time_12h(time_24h: str) -> str:
     return datetime.strptime(time_24h, "%H:%M").strftime("%I:%M %p").lstrip("0")
 
 
-def format_date_us(value: date) -> str:
+def format_date_us(value: date | str) -> str:
+    if isinstance(value, str):
+        return parse_appointment_date(value).strftime("%m/%d/%Y")
     return value.strftime("%m/%d/%Y")
