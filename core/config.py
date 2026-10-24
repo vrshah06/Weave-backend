@@ -9,7 +9,7 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 DEFAULT_MESSAGE_TEMPLATE = (
-    "This is a friendly reminder that you have an appointment scheduled on {appointment_date} "
+    "This is a friendly reminder that {patient_name} has an appointment scheduled on {appointment_date} "
     "at {appointment_time} with {business_name}.\n\n"
     "Should you need to reschedule or have any questions, please do not hesitate to contact us.\n\n"
     "Thank you for choosing {business_name}. We look forward to seeing you!\n\n"

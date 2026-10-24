@@ -201,8 +201,8 @@ class RunExecutor:
             await appointment_repository.set_status(appointment_id, AppointmentStatus.FAILED, result.reason, self.run_id)
             return RunItemStatus.FAILED, result.reason
         reason = result.reason or "Could not confirm the message was sent; check Weave"
-        await appointment_repository.set_status(appointment_id, AppointmentStatus.SENT, reason, self.run_id, {"sent_at": utc_now()})
-        return RunItemStatus.SENT, reason
+        await appointment_repository.set_status(appointment_id, AppointmentStatus.FAILED, reason, self.run_id)
+        return RunItemStatus.FAILED, reason
 
     async def _fail_before_send(self, appointment_id: ObjectId, status: RunItemStatus, reason: Optional[str]) -> tuple[RunItemStatus, Optional[str]]:
         # Dry runs never change appointment status.

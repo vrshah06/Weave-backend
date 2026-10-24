@@ -19,10 +19,14 @@ from utils.phone import mask_phone, national_number
 
 logger = logging.getLogger("weave.driver")
 
-DELIVERY_FAILURE_PATTERN = re.compile(r"not delivered|failed to send|message failed|undeliverable", re.I)
+DELIVERY_FAILURE_PATTERN = re.compile(
+    r"not delivered|failed to send|message failed|undeliverable|delivery failed|"
+    r"unable to deliver|cannot be delivered|delivery error|error sending",
+    re.I,
+)
 SEND_CONFIRM_TIMEOUT_MS = 6000
 DRAFT_SYNC_TIMEOUT_MS = 1500
-DELIVERY_SETTLE_MS = 2000
+DELIVERY_SETTLE_MS = 2500
 
 
 def _normalize_text(value: str) -> str:
@@ -431,13 +435,40 @@ class WeaveDriver:
 
         # The first line of the reminder contains the appointment date and time, so it identifies this message.
         expected = _normalize_text(text.strip().splitlines()[0])
+        expected_sample = expected[:40] if len(expected) >= 40 else expected
+
+        # Give Weave time to render the new message text into the thread item and settle
         newest = items.last
-        if expected not in _normalize_text(await newest.inner_text()):
+        found_message = False
+        for _ in range(10):
+            newest_text = _normalize_text(await newest.inner_text()) if await newest.count() else ""
+            if expected in newest_text or expected_sample in newest_text:
+                found_message = True
+                break
+            if DELIVERY_FAILURE_PATTERN.search(newest_text):
+                return SendResult(SendStatus.NOT_DELIVERED, f"Weave reported a delivery failure: {newest_text}")
+            await page.wait_for_timeout(300)
+
+        if not found_message:
             return SendResult(SendStatus.UNCONFIRMED, "The newest message in the conversation is not this reminder")
 
         # Give Weave time to flag a failed delivery on the new message before reading its status.
         await page.wait_for_timeout(DELIVERY_SETTLE_MS)
-        failure = DELIVERY_FAILURE_PATTERN.search(await newest.inner_text())
+        newest_text = await newest.inner_text() if await newest.count() else ""
+        failure = DELIVERY_FAILURE_PATTERN.search(newest_text)
+
+        # Also inspect for error / delivery failure icons or aria-labels on the newest message
+        if not failure and await newest.count():
+            error_icon = newest.locator(
+                "button[aria-label*='failed' i], button[aria-label*='not delivered' i], "
+                "button[aria-label*='error' i], button[aria-label*='retry' i], "
+                "[data-testid*='error' i], [data-trackingid*='error' i], [data-trackingid*='failed' i], "
+                "[class*='error' i], [class*='failed' i]"
+            )
+            if await error_icon.count() and await error_icon.first.is_visible():
+                aria = (await error_icon.first.get_attribute("aria-label")) or "Delivery error detected"
+                return SendResult(SendStatus.NOT_DELIVERED, f"Weave reported a delivery failure: {aria}")
+
         if failure:
             return SendResult(SendStatus.NOT_DELIVERED, f"Weave reported a delivery failure: {failure.group(0)}")
 

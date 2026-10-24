@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from core.config import DEFAULT_MESSAGE_TEMPLATE, config
 from core.errors import InvalidRequestError
 from repositories import settings_repository
-from services.message_template import render_sample, validate_template
+from services.message_template import normalize_template, render_sample, validate_template
 
 
 def _defaults() -> dict:
@@ -19,6 +19,7 @@ async def get_settings() -> dict:
 
 
 async def update_settings(business_name: str, message_template: str, time_zone: str) -> dict:
+    message_template = normalize_template(message_template)
     validate_template(message_template)
     try:
         ZoneInfo(time_zone)
